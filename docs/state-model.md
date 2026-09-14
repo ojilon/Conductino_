@@ -1,0 +1,93 @@
+# Lumen — State model
+
+Everything is defined in `src/types/domain.ts` and mutated only in `src/state/appState.tsx`.
+
+## Root shape
+
+```ts
+AppState = {
+  mode: "browser" | "reader",
+
+  browser: {                 // application state (persistable)
+    sessions: BrowserSession[]   // research sessions, each owns tabIds + activeTabId
+    activeSessionId
+    tabs: Record<id, BrowserTab> // each tab owns NavigationState {currentUrl, history, index}
+    ui: BrowserUIState           // EPHEMERAL: sidebar/panel open, panel width
+  },
+
+  reader: {                  // application state (persistable)
+    session: { id, tabIds, activeTabId }   // reader subtabs
+    tabs: Record<id, ReaderTab>            // ReaderTab → documentId + label
+    ui: ReaderUIState            // EPHEMERAL: rail/sidebar/panel, companion payload
+  },
+
+  sources: Record<id, Source>,        // the research corpus (web + local + summary)
+  documents: Record<id, Document>,    // structured DocumentModel instances
+  changes: Record<id, DocumentChange>,// AI proposals (pending/accepted/rejected)
+  aiActivities: AIActivity[],         // newest first — "what is AI doing right now?"
+  browse: BrowseState,                // AI Browse pipeline status + ranked sourceIds
+
+  // ephemeral
+  selection: TextSelection | null,    // live text selection + toolbar position
+  toast, settingsOpen, previewSourceId
+}
+```
+
+## What is persistent vs ephemeral
+
+| Persistent (SQLite candidates) | Ephemeral (UI, never stored) |
+|---|---|
+| `browser.sessions` / `tabs` (as history lists) | `*.ui` (panel widths, open/closed) |
+| `sources` (incl. `saved`, `rank`, `relevance`) | `selection` |
+| `documents` (blocks, highlights) | `toast`, `previewSourceId`, `settingsOpen` |
+| `documents[].sourceIds` (summary ← sources) | `browse.phase` (re-runnable pipeline state) |
+| `changes` (audit trail of accepted/rejected) | `aiActivities[].status === "running"` |
+| `aiActivities` (history) | `reader.ui.companion` (recomputable) |
+
+## Key relationships
+
+- **Browser:** `BrowserSession → tabIds[] → BrowserTab`. A tab *is* a navigation stack; opening/closing tabs never destroys history of other tabs.
+- **Reader:** `ReaderSession → tabIds[] → ReaderTab → Document`. Multiple subtabs open simultaneously; `activeTabId` is the current document. Views stay mounted, so scroll position + edits survive switches.
+- **Source ↔ Document:** `Document.sourceId → Source`; `Source.documentId` points back once a source is opened in the Reader. A source may be opened, closed and reopened — the `reader.doc.open` action reuses the existing tab if one exists.
+- **Summary ↔ Sources:** `Document.kind === "summary"` carries `sourceIds[]` — the explicit "these papers fed this summary" relationship. The top bar's "N sources contribute to this summary" reads exactly this. Adding a source happens in one reducer case (`summary.addSource`), triggered when an AI merge proposes an insertion from that source.
+- **Change ↔ Activity ↔ Source:** `DocumentChange.activityId → AIActivity` and `change.sourceId → Source` answer "where did this edit come from and who proposed it" (shown in the Inspect view).
+
+## DocumentModel (the renderer contract)
+
+```ts
+Document = {
+  id, kind: "source" | "summary", sourceId,
+  metadata: { title, author?, venue?, year?, format, pageCount?, path? },
+  blocks: DocumentBlock[],      // ordered; renderer maps over these
+  highlights: Highlight[],      // block-anchored annotations (note / saved selection)
+  sourceIds?: ID[],             // summary only
+  currentPage?: number          // mock pagination
+}
+DocumentBlock = { id, type: "heading"|"paragraph"|"list"|"page", level?,
+                  segments: Segment[], listItems?: Segment[][], changeId? }
+Segment = { text, em?, strong?, highlightId? }
+```
+
+Source documents are **read-only** with native text selection; summary documents are **block-editable** (plain-text contentEditable). Both render from the same model — the behavioral difference lives in the two view components, not in duplicated data structures.
+
+## Selection → AI workflow (state path)
+
+```
+native selection (mouseup)
+  → "selection.set" { documentId, blockId, text, x, y }
+  → SelectionToolbar renders (fixed, at x/y)
+  → user picks action
+  → useAIRunners.runX() records an AIActivity ("running")
+  → provider streams phases → "activity.update"
+  → onDone → companion payload / DocumentChange / highlight
+  → "selection.set" null (where appropriate)
+```
+
+`TextSelection` stores viewport coordinates for the toolbar; scrolling the document clears it (cheap and predictable). Block-level anchoring is today's precision; a range-precise selection API belongs to the renderer upgrade (docs/document-rendering.md).
+
+## Where things live — quick index
+
+- "Where does document state live?" → `state.documents`, mutated by `doc.*` and `change.*` actions.
+- "Where are AI activities tracked?" → `state.aiActivities` (history) + `state.browse` (pipeline).
+- "Where is the summary stored?" → `state.documents["…"].kind === "summary"`, with `sourceIds` for provenance.
+- "Where is the pending-change queue?" → `state.changes` filtered by `status: "pending"` per document (`pendingChangesFor`).

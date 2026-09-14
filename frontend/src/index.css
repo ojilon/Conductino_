@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  /* Surfaces — warm paper / cream system */
+  --color-paper: #fdfcf9;
+  --color-cream-50: #faf8f1;
+  --color-cream-100: #f3f0e6;
+  --color-cream-200: #e9e4d3;
+
+  /* Hairlines */
+  --color-line: #e5e1d4;
+  --color-line-soft: #efece2;
+
+  /* Ink — cool navy for text on warm paper */
+  --color-ink-900: #1f2547;
+  --color-ink-700: #333a63;
+  --color-ink-500: #565d85;
+  --color-ink-400: #7d82a2;
+
+  --color-mute: #97937e;
+
+  /* Iris — accent (indigo/periwinkle) */
+  --color-iris-50: #f2f3fc;
+  --color-iris-100: #e7e9fa;
+  --color-iris-200: #cfd3f3;
+  --color-iris-300: #aab1ec;
+  --color-iris-400: #818ae2;
+  --color-iris-500: #5b5fd8;
+  --color-iris-600: #4a4ecb;
+  --color-iris-700: #3c40b0;
+
+  /* Moss — highlights, "safe" states */
+  --color-moss-50: #eef7f0;
+  --color-moss-100: #ddf1e3;
+  --color-moss-200: #bde2c9;
+  --color-moss-600: #34714e;
+  --color-moss-700: #2a5c40;
+
+  /* Hay — AI insertions / pending change tint */
+  --color-hay-50: #fbf5de;
+  --color-hay-100: #f7ecc7;
+  --color-hay-200: #f1e0a4;
+  --color-hay-300: #ecd792;
+  --color-hay-600: #92701d;
+  --color-hay-700: #7a5c15;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-cream-50);
+  color: var(--color-ink-700);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: #c9cef6;
+  color: #1f2547;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d8d3c2;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #c4bfae;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Document body text (serif) */
+.doc-body {
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  line-height: 1.8;
+  color: #2c3358;
+}
+
+/* Editable summary blocks — keep native caret, no outline noise */
+[contenteditable="true"] {
+  outline: none;
+  caret-color: var(--color-iris-600);
+}
+[contenteditable="true"]:hover {
+  box-shadow: 0 0 0 1px var(--color-line-soft);
+}
+[contenteditable="true"]:focus {
+  box-shadow: 0 0 0 1.5px var(--color-iris-300);
+}
+
+/* Subtle functional animation only */
+@keyframes lumen-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-in {
+  animation: lumen-fade-in 160ms ease-out;
+}
