@@ -1,4 +1,8 @@
-# Lumen — desktop research browser + AI-assisted reader
+# Conductino_ — desktop research browser + AI-assisted reader
+
+```
+THE README NOT YET CORRECTED
+```
 
 A real project foundation: **Wails (Go) · React · TypeScript · Vite · Tailwind CSS 4 · SQLite (planned)**.
 Two application modes — **Browser** (research sessions with page tabs + AI Browse) and **Reader**
