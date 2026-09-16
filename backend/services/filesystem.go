@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/lumen/desktop/backend/models"
+	// NOTE (import fix): was `github.com/lumen/desktop/backend/models`.
+	// The module is `Conductino` (go.mod), so the correct local path is
+	// `Conductino/backend/models`. `models` supplies FileTreeNode, the
+	// JSON shape returned to the frontend over the Wails boundary.
+	"Conductino/backend/models"
 )
 
 // FilesystemService is the boundary for all OS filesystem access.

@@ -9,7 +9,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/lumen/desktop/backend/models"
+	// NOTE (import fix): the module is named `Conductino` in go.mod, so every
+	// internal import must start with `Conductino/...`. The old path
+	// `github.com/lumen/desktop/backend/models` pointed at a different,
+	// non-existent module and broke `go build`. `models` holds the shared
+	// Go mirror of the frontend domain types (see backend/models/models.go).
+	"Conductino/backend/models"
 )
 
 // AIEventSink receives one streaming unit of an AI operation.

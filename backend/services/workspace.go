@@ -3,7 +3,10 @@ package services
 import (
 	"context"
 
-	"github.com/lumen/desktop/backend/models"
+	// NOTE (import fix): was `github.com/lumen/desktop/backend/models`.
+	// Fixed to `Conductino/backend/models` to match `module Conductino`
+	// in go.mod. `models` provides the Source type used below.
+	"Conductino/backend/models"
 )
 
 // WorkspaceService owns the persistent research workspace:

@@ -2,7 +2,7 @@
   "$schema": "https://wails.io",
   "name": "Conductino", 
   "frontend:dir": "frontend",
-  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:watcher": "pnpm.cmd run dev",
   "frontend:dev:serverUrl": "http://localhost:5173",
   "wailsjs:dir": "./frontend/wailsjs",
   "build:dir": "./build"

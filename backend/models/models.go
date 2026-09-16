@@ -6,12 +6,12 @@ package models
 type SourceKind string
 
 const (
-	SourceWeb      SourceKind = "web"
-	SourcePDF      SourceKind = "pdf"
-	SourceDOCX     SourceKind = "docx"
-	SourceHTML     SourceKind = "html"
-	SourceText     SourceKind = "text"
-	SourceSummary  SourceKind = "summary"
+	SourceWeb     SourceKind = "web"
+	SourcePDF     SourceKind = "pdf"
+	SourceDOCX    SourceKind = "docx"
+	SourceHTML    SourceKind = "html"
+	SourceText    SourceKind = "text"
+	SourceSummary SourceKind = "summary"
 )
 
 type Source struct {
@@ -29,12 +29,12 @@ type Source struct {
 }
 
 type FileTreeNode struct {
-	ID         string           `json:"id"`
-	Label      string           `json:"label"`
-	Kind       string           `json:"kind"` // "folder" | "file"
-	Ext        string           `json:"ext,omitempty"`
-	Children   []FileTreeNode   `json:"children,omitempty"`
-	DocumentID string           `json:"documentId,omitempty"`
+	ID         string         `json:"id"`
+	Label      string         `json:"label"`
+	Kind       string         `json:"kind"` // "folder" | "file"
+	Ext        string         `json:"ext,omitempty"`
+	Children   []FileTreeNode `json:"children,omitempty"`
+	DocumentID string         `json:"documentId,omitempty"`
 }
 
 type AIOperation string
@@ -61,9 +61,9 @@ type AIRequest struct {
 
 // AIEvent is one streaming unit emitted to the frontend.
 type AIEvent struct {
-	Type      string `json:"type"` // "phase" | "sources" | "done" | "error"
-	Phase     int    `json:"phase,omitempty"`
-	Label     string `json:"label,omitempty"`
+	Type      string   `json:"type"` // "phase" | "sources" | "done" | "error"
+	Phase     int      `json:"phase,omitempty"`
+	Label     string   `json:"label,omitempty"`
 	SourceIDs []string `json:"sourceIds,omitempty"`
-	Payload   string `json:"payload,omitempty"`
+	Payload   string   `json:"payload,omitempty"`
 }

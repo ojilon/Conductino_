@@ -3,18 +3,22 @@ package services
 import (
 	"context"
 
-	"github.com/lumen/desktop/backend/models"
+	// NOTE (import fix): was `github.com/lumen/desktop/backend/models`, which
+	// does not match the `Conductino` module in go.mod. Fixed to the real
+	// module path so `go build` resolves the local models package.
+	"Conductino/backend/models"
 )
 
 // DocumentService owns format extraction: turning raw files (PDF/DOCX/
 // HTML/TXT) into the structured DocumentModel the frontend renders.
 //
 // FUTURE INTEGRATION (per format — see docs/document-rendering.md):
-//   PDF   → pdfium / unipdf to extract text+layout, or ship pdf.js in the
-//          webview and keep extraction client-side
-//   DOCX  → baliance/gooxml or unidoc/unioffice to parse .docx into blocks
-//   HTML  → golang.org/x/net/html → block/segment tree
-//   TXT   → line split
+//
+//	PDF   → pdfium / unipdf to extract text+layout, or ship pdf.js in the
+//	       webview and keep extraction client-side
+//	DOCX  → baliance/gooxml or unidoc/unioffice to parse .docx into blocks
+//	HTML  → golang.org/x/net/html → block/segment tree
+//	TXT   → line split
 //
 // Until then, Extract returns a mock single-block document.
 type DocumentService interface {

@@ -13,13 +13,14 @@ import (
 // keeps the binary lightweight on low-spec Windows machines).
 //
 // Persistent concepts (schema is intentionally small for now):
-//   sessions(id, title, created_at)
-//   sources(id, kind, title, origin, url, saved)
-//   documents(id, source_id, kind, title, body_json)
-//   summary_sources(summary_document_id, source_id)
-//   ai_activities(id, operation, status, started_at, finished_at)
-//   document_changes(id, document_id, type, old, new, status, source_id)
-//   bookmarks(source_id, created_at)
+//
+//	sessions(id, title, created_at)
+//	sources(id, kind, title, origin, url, saved)
+//	documents(id, source_id, kind, title, body_json)
+//	summary_sources(summary_document_id, source_id)
+//	ai_activities(id, operation, status, started_at, finished_at)
+//	document_changes(id, document_id, type, old, new, status, source_id)
+//	bookmarks(source_id, created_at)
 type StorageService interface {
 	Init(ctx context.Context) error
 	Engine() string

@@ -4,7 +4,8 @@
  * The React app never touches the filesystem, database or network
  * directly. It calls these interfaces; today they are served by
  * in-memory mocks, tomorrow by Wails-bound Go methods
- * (window.go.main.App.*).
+ * (window.go.frontend.App.* — bound in frontend/app.go, bridged via
+ * backend/main.go which stays pure Go with no Wails imports).
  *
  * To replace a mock with the real Go implementation:
  *   1. Generate Wails bindings for the matching Go method
@@ -21,7 +22,7 @@ import { fileTreeMock } from "../mock/data";
 
 declare global {
   interface Window {
-    go?: { main?: { App?: unknown } };
+    go?: { frontend?: { App?: unknown } };
   }
 }
 
@@ -106,7 +107,7 @@ const MockWorkspace: WorkspaceService = {
 /* ------------------------------------------------------------------ */
 
 export function createBackend(): BackendServices {
-  // Future: if (window.go?.main?.App) return new WailsBackend(...);
+  // Future: if (window.go?.frontend?.App) return new WailsBackend(...);
   return {
     mode: "mock",
     filesystem: MockFilesystem,
