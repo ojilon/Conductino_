@@ -27,6 +27,7 @@ export namespace models {
 	    label: string;
 	    kind: string;
 	    ext?: string;
+	    path?: string;
 	    children?: FileTreeNode[];
 	    documentId?: string;
 	
@@ -40,6 +41,7 @@ export namespace models {
 	        this.label = source["label"];
 	        this.kind = source["kind"];
 	        this.ext = source["ext"];
+	        this.path = source["path"];
 	        this.children = this.convertValues(source["children"], FileTreeNode);
 	        this.documentId = source["documentId"];
 	    }

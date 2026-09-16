@@ -29,10 +29,17 @@ type Source struct {
 }
 
 type FileTreeNode struct {
-	ID         string         `json:"id"`
-	Label      string         `json:"label"`
-	Kind       string         `json:"kind"` // "folder" | "file"
-	Ext        string         `json:"ext,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Kind  string `json:"kind"` // "folder" | "file"
+	Ext   string `json:"ext,omitempty"`
+	// Path locates the node on disk, relative to the workspace root the
+	// backend holds privately (Filesystem.root, set from the folder dialog).
+	// It is relative — never absolute — so no machine-specific path leaks
+	// into UI state or persistence. The frontend treats it as an opaque
+	// token: display Label, send Path back for open/extract/reveal, never
+	// build paths itself. Mirrors `path?` on the TS FileTreeNode.
+	Path       string         `json:"path,omitempty"`
 	Children   []FileTreeNode `json:"children,omitempty"`
 	DocumentID string         `json:"documentId,omitempty"`
 }

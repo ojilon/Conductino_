@@ -7,7 +7,9 @@
  * subtabs — a requirement, not a nicety, for research workflows.
  */
 
+import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument } from "../../state/appState";
+import { backend } from "../../services/backend";
 import { ResizablePanel } from "../../components/ui";
 import { uid } from "../../utils/helpers";
 import { makeDocumentFromSource } from "../../mock/data";
@@ -23,6 +25,41 @@ export default function ReaderMode() {
   const ui = state.reader.ui;
   const doc = activeReaderDocument(state);
   const session = state.reader.session;
+
+  // Single owner of the workspace tree: undefined = loading, null = no
+  // workspace yet (empty state), FileTreeNode = live tree (mock data in
+  // browser mode, real walkDir tree in the desktop app).
+  const [tree, setTree] = useState<FileTreeNode | null | undefined>(undefined);
+  const [treeError, setTreeError] = useState<string | null>(null);
+
+  const refreshTree = useCallback(async () => {
+    try {
+      setTreeError(null);
+      setTree(await backend.filesystem.listRoot());
+    } catch (e) {
+      setTreeError(e instanceof Error ? e.message : "Could not load workspace");
+    }
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    backend.filesystem
+      .listRoot()
+      .then((t) => live && setTree(t))
+      .catch((e: unknown) => live && setTreeError(e instanceof Error ? e.message : "Could not load workspace"));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Folder dialog → backend repoints itself (App.SelectFolder) → re-read.
+  // Null = cancelled (or mock mode): keep the current tree, no toast.
+  const pickFolder = useCallback(async () => {
+    const picked = await backend.filesystem.selectFolder().catch(() => null);
+    if (picked == null) return;
+    await refreshTree();
+    dispatch({ type: "toast", message: `Workspace: ${picked}` });
+  }, [refreshTree, dispatch]);
 
   /** Open a workspace file as a reader document (mock document factory). */
   const openFile = (node: FileTreeNode & { path: string }) => {
@@ -51,7 +88,7 @@ export default function ReaderMode() {
       id: sourceId,
       kind: ext === "docx" ? "docx" : ext === "html" ? "html" : ext === "txt" ? "text" : "pdf",
       title,
-      origin: `research_workspace/${node.path}`,
+      origin: node.path, // already root-relative (FileTreeNode.path token)
       typeLabel: `${ext.toUpperCase()} document`,
       abstract: `Workspace file “${node.path}”, extracted with the mock document pipeline. Real extraction (pdf.js / docx) is a documented integration point — see docs/document-rendering.md.`,
       saved: false,
@@ -66,10 +103,17 @@ export default function ReaderMode() {
 
   return (
     <div className="flex h-full min-h-0">
-      <ReaderSidebar doc={doc} onOpenFile={openFile} />
+      <ReaderSidebar
+        doc={doc}
+        onOpenFile={openFile}
+        tree={tree}
+        treeError={treeError}
+        onPickFolder={pickFolder}
+        onRefreshTree={refreshTree}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <ReaderTabs onOpenFile={openFile} />
+        <ReaderTabs onOpenFile={openFile} tree={tree} />
         <div
           className="min-h-0 flex-1 overflow-y-auto bg-cream-50"
           onScroll={() => {

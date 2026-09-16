@@ -27,8 +27,19 @@ declare global {
 }
 
 export interface FilesystemService {
-  /** Root tree of the workspace folder. */
-  listRoot(): Promise<FileTreeNode>;
+  /**
+   * Root tree of the workspace folder (ONE nested root node, as returned by
+   * Go walkDir via App.ListWorkspace). Null means "no workspace yet" — the
+   * UI shows its empty state, not an error.
+   */
+  listRoot(): Promise<FileTreeNode | null>;
+  /**
+   * OS folder dialog (App.SelectFolder). Returns the picked absolute path,
+   * or null when cancelled. The Go side repoints the workspace itself, so
+   * callers just re-call listRoot() afterwards. Null in mock/browser mode
+   * (no dialog exists there) — callers treat it as "keep current tree".
+   */
+  selectFolder(): Promise<string | null>;
   /** OS "show in folder" — a Go-only capability. */
   showContainingFolder(path: string): Promise<{ ok: boolean; note: string }>;
 }
@@ -66,6 +77,10 @@ const MockFilesystem: FilesystemService = {
   async listRoot() {
     await delay(120);
     return fileTreeMock;
+  },
+  async selectFolder() {
+    await delay(50);
+    return null; // no OS dialog in mock/browser mode — caller keeps current tree
   },
   async showContainingFolder(path) {
     await delay(200);

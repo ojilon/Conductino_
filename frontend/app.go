@@ -79,8 +79,9 @@ func (a *App) ShowContainingFolder(path string) (string, error) {
 	return a.backend.ShowContainingFolder(path)
 }
 
-// ListWorkspace returns the workspace file tree for the reader sidebar.
-func (a *App) ListWorkspace() ([]models.FileTreeNode, error) {
+// ListWorkspace returns the workspace file tree for the reader sidebar as
+// ONE nested root node (with Children). Nil + nil means "no workspace yet".
+func (a *App) ListWorkspace() (*models.FileTreeNode, error) {
 	return a.backend.ListWorkspace()
 }
 
@@ -114,4 +115,21 @@ func (a *App) StreamAIRequest(req models.AIRequest) error {
 		runtime.EventsEmit(a.ctx, "ai://event", ev)
 	})
 	return nil
+}
+
+// SelectFolder opens the OS folder dialog and repoints the workspace at the
+// chosen directory, so the next ListWorkspace reads the newly picked folder.
+// A cancelled dialog returns "" + nil and leaves the current root untouched.
+// (Drive-by fixes while wiring this up: OpenDialogOptions needed its runtime
+// qualifier, and the dialog call is OpenDirectoryDialog in Wails v2 — the
+// pasted WithOptions name does not exist there.)
+func (a *App) SelectFolder() (string, error) {
+	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select folder to read from",
+	})
+	if err != nil || path == "" {
+		return path, err
+	}
+	a.backend.SetWorkspaceRoot(path)
+	return path, nil
 }

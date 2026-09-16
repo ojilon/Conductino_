@@ -350,6 +350,13 @@ export interface FileTreeNode {
   label: string;
   kind: "folder" | "file";
   ext?: string;
+  /**
+   * Disk location, relative to the workspace root the Go backend holds
+   * privately (set from the folder dialog). Opaque token: display `label`,
+   * send `path` back for open/extract/reveal, never build paths in TS.
+   * Mirrors `Path` on the Go FileTreeNode (backend/models/models.go).
+   */
+  path?: string;
   children?: FileTreeNode[];
   /** Set when the file maps to an openable reader document. */
   documentId?: ID;

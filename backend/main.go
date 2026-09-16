@@ -91,11 +91,19 @@ func (b *Backend) ShowContainingFolder(path string) (string, error) {
 	return b.fs.ShowContainingFolder(path)
 }
 
-// ListWorkspace returns the workspace file tree for the reader sidebar.
-// Forwards to Filesystem.ListRoot. A missing workspace dir yields an empty
-// tree (not an error) so the UI shows its empty state.
-func (b *Backend) ListWorkspace() ([]models.FileTreeNode, error) {
+// ListWorkspace returns the workspace file tree for the reader sidebar as
+// ONE nested root node (with Children), matching the TS FileTreeNode shape.
+// Forwards to Filesystem.ListRoot. A missing workspace dir yields nil + nil
+// (not an error) so the UI shows its empty state.
+func (b *Backend) ListWorkspace() (*models.FileTreeNode, error) {
 	return b.fs.ListRoot()
+}
+
+// SetWorkspaceRoot repoints the workspace at a new directory (absolute path
+// from the folder dialog). The Wails shell calls this right after the dialog
+// returns, so the next ListWorkspace reads the newly chosen folder.
+func (b *Backend) SetWorkspaceRoot(path string) {
+	b.fs.SetRoot(path)
 }
 
 // GetSources returns persisted sources (empty while storage is the

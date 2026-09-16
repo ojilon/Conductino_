@@ -8,14 +8,15 @@ import { Icon, type IconName } from "../../components/icons";
 import { Menu, MenuItem } from "../../components/ui";
 import { cn } from "../../utils/cn";
 import { uid } from "../../utils/helpers";
-import { fileTreeMock } from "../../mock/data";
 import type { FileTreeNode } from "../../types/domain";
 
 export function flatFiles(node: FileTreeNode, prefix = ""): (FileTreeNode & { path: string })[] {
   const out: (FileTreeNode & { path: string })[] = [];
   const walk = (n: FileTreeNode, p: string) => {
-    if (n.kind === "file") out.push({ ...n, path: p ? `${p}/${n.label}` : n.label });
-    n.children?.forEach((c) => walk(c, p ? `${p}/${n.label}` : n.label));
+    // Prefer the backend Path token; fall back to label-built prefixes.
+    const token = n.path ?? (p ? `${p}/${n.label}` : n.label);
+    if (n.kind === "file") out.push({ ...n, path: token });
+    n.children?.forEach((c) => walk(c, token));
   };
   node.children?.forEach((c) => walk(c, prefix));
   return out;
@@ -26,10 +27,17 @@ function docIcon(docKind: "source" | "summary"): IconName {
   return "fileText";
 }
 
-export default function ReaderTabs({ onOpenFile }: { onOpenFile: (node: FileTreeNode & { path: string }) => void }) {
+export default function ReaderTabs({
+  onOpenFile,
+  tree,
+}: {
+  onOpenFile: (node: FileTreeNode & { path: string }) => void;
+  /** Live workspace tree from ReaderMode; null/undefined = nothing to list yet. */
+  tree: FileTreeNode | null | undefined;
+}) {
   const { state, dispatch } = useApp();
   const session = state.reader.session;
-  const files = flatFiles(fileTreeMock);
+  const files = tree ? flatFiles(tree) : [];
 
   return (
     <div className="flex items-center gap-1 border-b border-line bg-cream-50/60 px-3 pt-2">
@@ -95,6 +103,11 @@ export default function ReaderTabs({ onOpenFile }: { onOpenFile: (node: FileTree
               <p className="px-3 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-mute">
                 From workspace
               </p>
+              {files.length === 0 && (
+                <p className="px-3 py-2 text-[12px] text-mute">
+                  {tree === undefined ? "Loading workspace…" : "No workspace — pick a folder in the sidebar."}
+                </p>
+              )}
               {files.map((f) => (
                 <MenuItem
                   key={f.id}

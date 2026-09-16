@@ -14,7 +14,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../state/appState";
 import { backend } from "../../services/backend";
-import { fileTreeMock } from "../../mock/data";
 import type { Document, FileTreeNode, RailView } from "../../types/domain";
 import { Icon, type IconName } from "../../components/icons";
 import { Button, EmptyState } from "../../components/ui";
@@ -40,11 +39,26 @@ function FileTree({
   node: FileTreeNode;
   onFile: (n: FileTreeNode & { path: string }) => void;
 }) {
-  const [open, setOpen] = useState<Record<string, boolean>>({ "ft-papers": true, "ft-notes": true });
-  const [activeId, setActiveId] = useState<string>("ft-mitchell");
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [activeId, setActiveId] = useState<string>("");
+
+  // Open top-level folders whenever a new tree arrives (mock ids like
+  // "ft-papers" no longer exist on real walkDir trees, so nothing is
+  // hardcoded here).
+  useEffect(() => {
+    const initial: Record<string, boolean> = {};
+    node.children?.forEach((c) => {
+      if (c.kind === "folder") initial[c.id] = true;
+    });
+    setOpen(initial);
+    setActiveId("");
+  }, [node]);
 
   const walk = (n: FileTreeNode, path: string, d: number) => {
-    const prefix = path ? `${path}/${n.label}` : n.label;
+    // Prefer the backend Path token (root-relative, stable); fall back to a
+    // label-built prefix for mock nodes that carry no path.
+    const token = n.path ?? (path ? `${path}/${n.label}` : n.label);
+    const prefix = token;
     return (
       <div key={n.id}>
         <button
@@ -91,20 +105,26 @@ function FileTree({
 /* Document info + TOC                                                 */
 /* ------------------------------------------------------------------ */
 
-function DocumentInfoPanel({ doc, onOpenFile }: { doc: Document; onOpenFile: (n: FileTreeNode & { path: string }) => void }) {
+function DocumentInfoPanel({
+  doc,
+  onOpenFile,
+  tree,
+  treeError,
+  onPickFolder,
+  onRefreshTree,
+}: {
+  doc: Document;
+  onOpenFile: (n: FileTreeNode & { path: string }) => void;
+  /** undefined = loading, null = no workspace yet — owned by ReaderMode. */
+  tree: FileTreeNode | null | undefined;
+  treeError: string | null;
+  onPickFolder: () => void;
+  onRefreshTree: () => void;
+}) {
   const { dispatch } = useApp();
-  const [tree, setTree] = useState<FileTreeNode>(fileTreeMock);
   const [tocActive, setTocActive] = useState<string | null>(null);
   const meta = doc.metadata;
   const headings = doc.blocks.filter((b) => b.type === "heading" && b.level === 2);
-
-  useEffect(() => {
-    let live = true;
-    backend.filesystem.listRoot().then((t) => live && setTree(t));
-    return () => {
-      live = false;
-    };
-  }, []);
 
   useEffect(() => {
     setTocActive(headings[0]?.id ?? null);
@@ -173,11 +193,35 @@ function DocumentInfoPanel({ doc, onOpenFile }: { doc: Document; onOpenFile: (n:
       {/* file tree */}
       <section>
         <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">Files</h4>
-        <FileTree node={tree} onFile={onOpenFile} />
+        {treeError ? (
+          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
+            <p className="text-[12px] text-ink-700">Couldn’t load the workspace: {treeError}</p>
+            <Button variant="soft" icon="refresh" className="mt-2 w-full" onClick={onRefreshTree}>
+              Retry
+            </Button>
+          </div>
+        ) : tree === undefined ? (
+          <p className="px-1 py-2 text-[12px] text-mute">Loading workspace…</p>
+        ) : tree === null ? (
+          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
+            <p className="text-[12px] text-ink-700">No workspace folder selected.</p>
+            <Button variant="soft" icon="folder" className="mt-2 w-full" onClick={onPickFolder}>
+              Open folder
+            </Button>
+          </div>
+        ) : (
+          <>
+            <p className="mb-1 truncate px-1 text-[11px] text-mute">{tree.label}</p>
+            <FileTree node={tree} onFile={onOpenFile} />
+          </>
+        )}
+        <Button variant="soft" icon="folder" className="mt-3 w-full" onClick={onPickFolder}>
+          Open folder
+        </Button>
         <Button
           variant="soft"
           icon="folder"
-          className="mt-3 w-full"
+          className="mt-2 w-full"
           onClick={() => {
             const path = meta.path ?? "research_workspace";
             backend.filesystem.showContainingFolder(path).then((r) => {
@@ -251,9 +295,18 @@ function SummarySourcesPanel({ doc }: { doc: Document }) {
 export default function ReaderSidebar({
   doc,
   onOpenFile,
+  tree,
+  treeError,
+  onPickFolder,
+  onRefreshTree,
 }: {
   doc: Document | undefined;
   onOpenFile: (n: FileTreeNode & { path: string }) => void;
+  /** Workspace tree owned by ReaderMode: undefined = loading, null = none. */
+  tree: FileTreeNode | null | undefined;
+  treeError: string | null;
+  onPickFolder: () => void;
+  onRefreshTree: () => void;
 }) {
   const { state, dispatch } = useApp();
   const ui = state.reader.ui;
@@ -313,7 +366,14 @@ export default function ReaderSidebar({
                 doc.kind === "summary" ? (
                   <SummarySourcesPanel doc={doc} />
                 ) : (
-                  <DocumentInfoPanel doc={doc} onOpenFile={onOpenFile} />
+                  <DocumentInfoPanel
+                    doc={doc}
+                    onOpenFile={onOpenFile}
+                    tree={tree}
+                    treeError={treeError}
+                    onPickFolder={onPickFolder}
+                    onRefreshTree={onRefreshTree}
+                  />
                 )
               ) : (
                 <EmptyState icon="fileText" title="No document open" hint="Open a document from the tabs bar." />

@@ -22,6 +22,10 @@ export function SaveWorkspace() {
   return window['go']['frontend']['App']['SaveWorkspace']();
 }
 
+export function SelectFolder() {
+  return window['go']['frontend']['App']['SelectFolder']();
+}
+
 export function ShowContainingFolder(arg1) {
   return window['go']['frontend']['App']['ShowContainingFolder'](arg1);
 }
