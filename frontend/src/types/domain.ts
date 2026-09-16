@@ -201,6 +201,14 @@ export interface DocumentMetadata {
   format: SourceKind;
   pageCount?: number;
   path?: string;
+  /**
+   * Absolute workspace root the file was opened from (tasks.md 1.1 option b).
+   * Compared against the current library root before any resolve/reveal/
+   * locate — a mismatch means "file belongs to another folder", never a
+   * silent re-resolve against the new root. Undefined = untagged (mock data,
+   * summaries, pre-fix documents) — no stale check applies.
+   */
+  rootPath?: string;
 }
 
 /**

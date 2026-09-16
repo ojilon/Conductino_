@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument } from "../../state/appState";
 import { backend } from "../../services/backend";
 import { ResizablePanel } from "../../components/ui";
-import { uid } from "../../utils/helpers";
+import { isStaleRoot, uid } from "../../utils/helpers";
 import { makeDocumentFromSource } from "../../mock/data";
 import type { DocumentBlock, FileTreeNode, Source } from "../../types/domain";
 import ReaderSidebar from "./ReaderSidebar";
@@ -34,6 +34,9 @@ export default function ReaderMode() {
   // Path token the Library panel should expand + highlight (set by "Show in
   // library" in the Documents panel, cleared once consumed there).
   const [locatePath, setLocatePath] = useState<string | null>(null);
+  // Absolute workspace root tagging the current folder (tasks.md 1.1 option b).
+  // Null = unknown (mock mode / bridge unavailable) — stale checks are skipped.
+  const [currentRoot, setCurrentRoot] = useState<string | null>(null);
 
   const refreshTree = useCallback(async () => {
     try {
@@ -50,6 +53,10 @@ export default function ReaderMode() {
       .list()
       .then((t) => live && setTree(t))
       .catch((e: unknown) => live && setTreeError(e instanceof Error ? e.message : "Could not load library"));
+    backend.filesystem
+      .libraryRoot()
+      .then((r) => live && r && setCurrentRoot(r))
+      .catch(() => {});
     return () => {
       live = false;
     };
@@ -67,17 +74,28 @@ export default function ReaderMode() {
       return;
     }
     await refreshTree();
+    // The dialog already repointed the Go root; the returned absolute path is
+    // the new current root. Refresh from the bridge as well in case the shell
+    // normalized it — open tabs keep their old rootPath tags (1.1 option b).
+    const root = await backend.filesystem.libraryRoot().catch(() => null);
+    setCurrentRoot(root ?? picked);
     dispatch({ type: "toast", message: `Library: ${picked}` });
   }, [refreshTree, dispatch]);
 
   // Documents panel → Library panel handoff: switch rail views and ask the
-  // tree to reveal this file's location.
+  // tree to reveal this file's location. Stale guard (tasks.md 1.1 option b):
+  // a tab tagged with another folder's root never resolves against the
+  // current tree — explicit message instead of a silent mis-locate.
   const showInLibrary = useCallback(
-    (path: string) => {
+    (path: string, rootPath?: string) => {
+      if (isStaleRoot(rootPath, currentRoot)) {
+        dispatch({ type: "toast", message: "This file belongs to another folder — switch back to reveal it in the library." });
+        return;
+      }
       setLocatePath(path);
       dispatch({ type: "reader.ui", patch: { railView: "library", sidebarOpen: true } });
     },
-    [dispatch],
+    [dispatch, currentRoot],
   );
 
   /** Open a workspace file as a reader document. */
@@ -137,6 +155,9 @@ export default function ReaderMode() {
               format: "text",
               pageCount: opened.pageCount ?? 1,
               path: node.path,
+              // Tag with the opening folder (1.1 option b): Go's absolute root
+              // wins (race-free); fall back to the UI-known current root.
+              rootPath: opened.root ?? currentRoot ?? undefined,
             },
             blocks,
             highlights: [],
@@ -167,7 +188,11 @@ export default function ReaderMode() {
       documentId: docId,
     };
     dispatch({ type: "source.add", source });
-    dispatch({ type: "doc.add", document: makeDocumentFromSource(sourceId, source, docId) });
+    const mockDoc = makeDocumentFromSource(sourceId, source, docId);
+    // Tag mock-fallback docs too — the same stale-tab rule applies: after a
+    // folder switch this tab belongs to the folder it was opened from.
+    if (currentRoot) mockDoc.metadata.rootPath = currentRoot;
+    dispatch({ type: "doc.add", document: mockDoc });
     dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: title.length > 18 ? `${title.slice(0, 16)}…` : title });
     dispatch({ type: "toast", message: `Opened ${node.label} (mock extraction)` });
   };
@@ -184,6 +209,7 @@ export default function ReaderMode() {
         locatePath={locatePath}
         onLocateDone={() => setLocatePath(null)}
         onShowInLibrary={showInLibrary}
+        currentRoot={currentRoot}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">

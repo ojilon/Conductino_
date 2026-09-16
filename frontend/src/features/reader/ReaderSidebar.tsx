@@ -18,7 +18,7 @@ import type { Document, FileTreeNode, RailView } from "../../types/domain";
 import { Icon, type IconName } from "../../components/icons";
 import { Button, EmptyState } from "../../components/ui";
 import { cn } from "../../utils/cn";
-import { truncate } from "../../utils/helpers";
+import { isStaleRoot, truncate } from "../../utils/helpers";
 
 const RAIL: { id: RailView; icon: IconName; label: string }[] = [
   { id: "documents", icon: "fileText", label: "Document" },
@@ -137,10 +137,13 @@ function FileTree({
 function DocumentInfoPanel({
   doc,
   onShowInLibrary,
+  currentRoot,
 }: {
   doc: Document;
   /** Reveal this file's location in the Library view (no-op when unknown). */
-  onShowInLibrary: (path: string) => void;
+  onShowInLibrary: (path: string, rootPath?: string) => void;
+  /** Absolute workspace root for stale-tab detection (tasks.md 1.1 option b). */
+  currentRoot: string | null;
 }) {
   const { dispatch } = useApp();
   const [tocActive, setTocActive] = useState<string | null>(null);
@@ -214,8 +217,15 @@ function DocumentInfoPanel({
       {/* file location: the tree itself lives in the Library view now */}
       <section>
         <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">File</h4>
-        {meta.path ? (
-          <Button variant="soft" icon="book" className="w-full" onClick={() => onShowInLibrary(meta.path!)}>
+        {isStaleRoot(meta.rootPath, currentRoot) ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+            <p className="text-[12px] font-medium text-amber-800">This file belongs to another folder.</p>
+            <p className="mt-0.5 truncate text-[11px] text-amber-700" title={meta.rootPath}>
+              Opened from {meta.rootPath}
+            </p>
+          </div>
+        ) : meta.path ? (
+          <Button variant="soft" icon="book" className="w-full" onClick={() => onShowInLibrary(meta.path!, meta.rootPath)}>
             Show in library
           </Button>
         ) : (
@@ -226,6 +236,13 @@ function DocumentInfoPanel({
           icon="folder"
           className="mt-2 w-full"
           onClick={() => {
+            // Stale guard (tasks.md 1.1 option b): never resolve a tab tagged
+            // with another folder's root against the current root — Go's
+            // Resolve would silently target new-root/old-relative-path.
+            if (isStaleRoot(meta.rootPath, currentRoot)) {
+              dispatch({ type: "toast", message: "This file belongs to another folder — switch back to reveal it." });
+              return;
+            }
             const path = meta.path ?? "research_workspace";
             backend.filesystem.showContainingFolder(path).then((r) => {
               dispatch({ type: "toast", message: r.note });
@@ -361,6 +378,7 @@ export default function ReaderSidebar({
   locatePath,
   onLocateDone,
   onShowInLibrary,
+  currentRoot,
 }: {
   doc: Document | undefined;
   onOpenFile: (n: FileTreeNode & { path: string }) => void;
@@ -372,7 +390,9 @@ export default function ReaderSidebar({
   /** Path token the Library tree should reveal (one-shot, see FileTree). */
   locatePath: string | null;
   onLocateDone: () => void;
-  onShowInLibrary: (path: string) => void;
+  onShowInLibrary: (path: string, rootPath?: string) => void;
+  /** Absolute workspace root for stale-tab detection (tasks.md 1.1 option b). */
+  currentRoot: string | null;
 }) {
   const { state, dispatch } = useApp();
   const ui = state.reader.ui;
@@ -432,7 +452,7 @@ export default function ReaderSidebar({
                 doc.kind === "summary" ? (
                   <SummarySourcesPanel doc={doc} />
                 ) : (
-                  <DocumentInfoPanel doc={doc} onShowInLibrary={onShowInLibrary} />
+                  <DocumentInfoPanel doc={doc} onShowInLibrary={onShowInLibrary} currentRoot={currentRoot} />
                 )
               ) : (
                 <EmptyState icon="fileText" title="No document open" hint="Open a document from the tabs bar." />

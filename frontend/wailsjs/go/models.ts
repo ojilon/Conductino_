@@ -69,6 +69,7 @@ export namespace models {
 	    blocksJSON: string;
 	    pageCount?: number;
 	    kind?: string;
+	    root?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new OpenedDocument(source);
@@ -80,6 +81,7 @@ export namespace models {
 	        this.blocksJSON = source["blocksJSON"];
 	        this.pageCount = source["pageCount"];
 	        this.kind = source["kind"];
+	        this.root = source["root"];
 	    }
 	}
 	export class Source {

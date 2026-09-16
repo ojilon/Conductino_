@@ -29,6 +29,7 @@ interface WailsApp {
   SelectFolder(): Promise<string>;
   OpenFile(path: string): Promise<OpenedFile>;
   ShowContainingFolder(path: string): Promise<string>;
+  LibraryRoot(): Promise<string>;
 }
 
 declare global {
@@ -52,6 +53,8 @@ export interface OpenedFile {
   blocksJSON: string;
   pageCount?: number;
   kind?: string;
+  /** Absolute opening root tagging the file's folder (tasks.md 1.1 option b). */
+  root?: string;
 }
 
 export interface FilesystemService {
@@ -70,6 +73,11 @@ export interface FilesystemService {
   openFile(path: string): Promise<OpenedFile | null>;
   /** OS "show in folder" — a Go-only capability. */
   showContainingFolder(path: string): Promise<{ ok: boolean; note: string }>;
+  /**
+   * Absolute workspace root (App.LibraryRoot). Null in mock/browser mode.
+   * Used to tag opened documents and detect stale tabs (tasks.md 1.1 b).
+   */
+  libraryRoot(): Promise<string | null>;
 }
 
 /**
@@ -131,6 +139,10 @@ const MockFilesystem: FilesystemService = {
       ok: true,
       note: `Would reveal “${path}” in the OS file manager (Go: os.StartProcess — backend/services/filesystem.go).`,
     };
+  },
+  async libraryRoot() {
+    await delay(10);
+    return null;
   },
 };
 
@@ -200,6 +212,16 @@ const WailsFilesystem: FilesystemService = {
       return { ok: true, note: `Revealed in file manager: ${dir}` };
     } catch (e) {
       return { ok: false, note: e instanceof Error ? e.message : "Reveal failed" };
+    }
+  },
+  async libraryRoot() {
+    const app = wailsApp();
+    if (!app) return null;
+    try {
+      const root = await app.LibraryRoot();
+      return root || null;
+    } catch {
+      return null;
     }
   },
 };

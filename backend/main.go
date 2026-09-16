@@ -116,12 +116,25 @@ func (b *Backend) SetLibraryRoot(path string) {
 // against the workspace root (Filesystem.Resolve — escapes rejected), then
 // dispatched by extension in Documents: plain text reads for real today,
 // PDF/DOCX/… return ErrUnsupportedType so the UI falls back to its mock.
+// The returned document is tagged with the absolute opening root
+// (tasks.md 1.1 option b) so the UI can detect stale tabs after a switch.
 func (b *Backend) OpenFile(relPath string) (models.OpenedDocument, error) {
 	abs, err := b.fs.Resolve(relPath)
 	if err != nil {
 		return models.OpenedDocument{}, err
 	}
-	return b.docs.OpenFile(abs)
+	opened, err := b.docs.OpenFile(abs)
+	if err != nil {
+		return models.OpenedDocument{}, err
+	}
+	opened.Root = b.fs.Root()
+	return opened, nil
+}
+
+// LibraryRoot returns the absolute workspace root so the UI can tag opened
+// documents and detect stale tabs after a folder switch (tasks.md 1.1 b).
+func (b *Backend) LibraryRoot() string {
+	return b.work.LibraryRoot()
 }
 
 // SetWorkspaceRoot repoints the workspace at a new directory (absolute path

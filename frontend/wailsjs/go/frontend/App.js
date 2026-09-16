@@ -14,6 +14,10 @@ export function Greet(arg1) {
   return window['go']['frontend']['App']['Greet'](arg1);
 }
 
+export function LibraryRoot() {
+  return window['go']['frontend']['App']['LibraryRoot']();
+}
+
 export function ListLibraryTree() {
   return window['go']['frontend']['App']['ListLibraryTree']();
 }

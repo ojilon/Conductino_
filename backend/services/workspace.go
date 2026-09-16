@@ -34,6 +34,9 @@ type WorkspaceService interface {
 	// SetLibraryRoot repoints the library at a new directory (absolute path
 	// from the folder dialog). Empty paths are ignored (cancelled dialog).
 	SetLibraryRoot(path string)
+	// LibraryRoot returns the absolute workspace root for stale-tab
+	// detection (tasks.md 1.1 option b).
+	LibraryRoot() string
 }
 
 type Workspace struct {
@@ -66,4 +69,9 @@ func (w *Workspace) LibraryTree() (*models.FileTreeNode, error) {
 // SetLibraryRoot repoints the composed Filesystem at the chosen folder.
 func (w *Workspace) SetLibraryRoot(path string) {
 	w.fs.SetRoot(path)
+}
+
+// LibraryRoot returns the absolute workspace root via the composed Filesystem.
+func (w *Workspace) LibraryRoot() string {
+	return w.fs.Root()
 }

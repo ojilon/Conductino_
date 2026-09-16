@@ -91,6 +91,12 @@ func (a *App) SetLibraryRoot(path string) {
 	a.backend.SetLibraryRoot(path)
 }
 
+// LibraryRoot returns the absolute workspace root so the UI can tag opened
+// documents with their opening folder (tasks.md 1.1 option b).
+func (a *App) LibraryRoot() string {
+	return a.backend.LibraryRoot()
+}
+
 // OpenFile opens one workspace file by its Path token and returns real
 // extracted content for supported types (.txt/.md today). Unsupported types
 // and escapes come back as errors — the UI falls back to its mock extract.

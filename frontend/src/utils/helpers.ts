@@ -33,3 +33,22 @@ export function hostOf(url: string): string {
     return url;
   }
 }
+
+/**
+ * Normalize a workspace root for stale-tab comparison (tasks.md 1.1 option b):
+ * slashes unified, trailing separators dropped, case-insensitive (Windows
+ * drive letters / UNC paths must not false-mismatch on case alone).
+ */
+export function normalizeRoot(root: string): string {
+  return root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * True when a document tagged with docRoot belongs to a different folder
+ * than currentRoot. Untagged sides (undefined/null/empty) never count as
+ * stale — mock data, summaries and pre-fix documents skip the check.
+ */
+export function isStaleRoot(docRoot: string | undefined | null, currentRoot: string | undefined | null): boolean {
+  if (!docRoot || !currentRoot) return false;
+  return normalizeRoot(docRoot) !== normalizeRoot(currentRoot);
+}

@@ -1,6 +1,6 @@
 # tasks.md — Lumen folder-open feature: bugs, design constraints, extraction plan
 
-Reader: a future model session with zero prior context. Codebase root is `D:\projects\Conductino_`.
+Reader: a future model session with zero prior context.
 Go module is `Conductino` (`go.mod:1`). Wails shell lives in `frontend/app.go`
 (`package frontend`, bound as `window.go.frontend.App.*`); pure-Go bridge in
 `backend/main.go` (`package backend`); services in `backend/services/`;

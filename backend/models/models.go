@@ -54,6 +54,10 @@ type OpenedDocument struct {
 	BlocksJSON string `json:"blocksJSON"`
 	PageCount  int    `json:"pageCount,omitempty"`
 	Kind       string `json:"kind,omitempty"` // "text" for the plain-text arm
+	// Root is the absolute workspace root the file was resolved against.
+	// Tags the document with its opening folder (tasks.md 1.1 option b)
+	// so the UI can detect stale tabs after a folder switch.
+	Root string `json:"root,omitempty"`
 }
 
 type AIOperation string

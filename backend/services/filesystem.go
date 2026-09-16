@@ -28,6 +28,10 @@ type FilesystemService interface {
 	// at read time, so a relative default still works.
 	SetRoot(path string)
 	ShowContainingFolder(path string) (string, error)
+	// Root returns the absolute workspace root. Used to tag opened
+	// documents with their opening folder (tasks.md 1.1 option b) so the
+	// UI can detect stale tabs after a folder switch.
+	Root() string
 }
 
 // Filesystem is the implementation. ListRoot recursively walks the
@@ -47,6 +51,16 @@ func (f *Filesystem) SetRoot(path string) {
 		return
 	}
 	f.root = path
+}
+
+// Root returns the workspace root as an absolute path. Falls back to the
+// stored value when Abs fails so callers always get a usable tag.
+func (f *Filesystem) Root() string {
+	abs, err := filepath.Abs(f.root)
+	if err != nil {
+		return f.root
+	}
+	return abs
 }
 
 func (f *Filesystem) ListRoot() (*models.FileTreeNode, error) {
