@@ -6,7 +6,13 @@
 |---|---|---|
 | App shell, mode switch, top bar | **WORKING** | `src/App.tsx` |
 | Browser UI (sessions, tabs, address bar, navigation, mock pages, search page, new tab) | **WORKING** (navigation real, page content mock) | `src/features/browser/` |
-| Reader UI (subtabs, document info, TOC, file tree, AI panels, resize/collapse) | **WORKING** | `src/features/reader/` |
+| Reader UI (subtabs, document info, TOC, file tree, AI panels, resize/collapse) | **WORKING** (tree moved to Library view; Documents panel slimmed) | `src/features/reader/` |
+| Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / MOCK tree in browser** | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
+| `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/services/documents.go:OpenFile` |
+| Open-failure reporting | **MISSING — all failures collapse to mock fallback** (see `tasks.md` §1.2) | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
+| Stale tabs on folder switch | **BUG, not started** (see `tasks.md` §1.1) | `Filesystem.root`, `metadata.path` |
+| Chosen-folder persistence across restarts | **MISSING** (memory only) | `backend/services/workspace.go:Save` |
+| Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
 | AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING boundary / MOCKED provider** | `src/services/ai.ts` |
@@ -18,9 +24,9 @@
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
-| PDF / DOCX rendering & extraction | **PLACEHOLDER** (mock structured renderer) | `DocumentView.tsx`, `backend/services/documents.go` |
-| Go backend services (filesystem, workspace, storage, AI) | **PLACEHOLDER / mock implementations** | `backend/services/` |
-| Wails wiring (bindings, events, embed) | **PLACEHOLDER** (staged, see architecture.md §Running under Wails) | `backend/main.go` |
+| PDF / DOCX rendering & extraction | **PLACEHOLDER** (mock structured renderer; library options evaluated in `tasks.md` §4) | `DocumentView.tsx`, `backend/services/documents.go` |
+| Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + `.txt` extraction real; storage + AI mock** | `backend/services/` |
+| Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
 | Character-range selection & diffs | **FUTURE** (boundary documented) | architecture.md §Diff |
@@ -28,14 +34,17 @@
 
 ## Suggested order of real integration
 
-1. **Wails wiring** — make `wails dev` serve this frontend; verify the mock app inside the shell (no code changes expected).
-2. **AI provider** — implement one real provider behind `AIProvider` (docs/ai-integration.md). Browse + explain immediately become real.
-3. **SQLite** — `SQLiteStorage` behind `StorageService`; start with sources + sessions, then documents/changes/activities (schema sketched in `backend/services/storage.go`).
-4. **PDF rendering** — decide canvas (pdf.js) vs extraction-first (docs/document-rendering.md). Extraction-first reuses the entire AI/selection stack sooner.
-5. **DOCX** — same decision per format.
-6. **Browser engine** — Go webview behind `MockWebPage`; per-tab instances; forward navigation to `NavigationState`.
-7. **Rich summary editor + real diff** — only once AI merges are production-quality.
-8. **Range-precise selection/highlights** — alongside the renderer upgrades.
+1. **Wails wiring** — DONE for library+filesystem (`wails dev` serves the frontend with a real tree + `.txt` open). Remaining: AI events, storage.
+2. **Open-failure reporting** — typed reasons, mock-fallback only on `unsupported` (`tasks.md` §1.2). Do this BEFORE adding parsers, or parser bugs will hide as placeholders.
+3. **Stale tabs on folder switch** — invalidate or root-tag (`tasks.md` §1.1).
+4. **Chosen-folder persistence** — persist root via `Workspace.Save`/`Init`.
+5. **PDF/DOCX extraction** — extraction-first into block/segment JSON per `tasks.md` §§3–4 (this reuses the entire AI/selection stack; canvas rendering stays optional).
+6. **AI provider** — implement one real provider behind `AIProvider` (docs/ai-integration.md). Browse + explain immediately become real. (Includes wiring the staged Go AI path + fixing the `Selection` shape mismatch noted there.)
+7. **SQLite** — `SQLiteStorage` behind `StorageService`; start with sources + sessions, then documents/changes/activities (schema sketched in `backend/services/storage.go`).
+8. **Multi-session tracking** — `sessionId` design per `tasks.md` §2, BEFORE any multi-session UI.
+9. **Slate adapter + DOCX save-out** — thin boundary adapters per `tasks.md` §3 steps 4–5, only once merges are production-quality.
+10. **Browser engine** — Go webview behind `MockWebPage`; per-tab instances; forward navigation to `NavigationState`.
+11. **Range-precise selection/highlights** — alongside the renderer upgrades.
 
 ## Replacing mock data
 

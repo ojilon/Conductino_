@@ -64,6 +64,24 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class OpenedDocument {
+	    title: string;
+	    blocksJSON: string;
+	    pageCount?: number;
+	    kind?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OpenedDocument(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.blocksJSON = source["blocksJSON"];
+	        this.pageCount = source["pageCount"];
+	        this.kind = source["kind"];
+	    }
+	}
 	export class Source {
 	    id: string;
 	    kind: string;

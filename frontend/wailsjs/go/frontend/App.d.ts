@@ -8,11 +8,15 @@ export function GetSources():Promise<Array<models.Source>>;
 
 export function Greet(arg1:string):Promise<string>;
 
-export function ListWorkspace():Promise<models.FileTreeNode>;
+export function ListLibraryTree():Promise<models.FileTreeNode>;
+
+export function OpenFile(arg1:string):Promise<models.OpenedDocument>;
 
 export function SaveWorkspace():Promise<void>;
 
 export function SelectFolder():Promise<string>;
+
+export function SetLibraryRoot(arg1:string):Promise<void>;
 
 export function ShowContainingFolder(arg1:string):Promise<string>;
 

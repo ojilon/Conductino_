@@ -49,22 +49,26 @@ type Backend struct {
 	// One field per submodule — the "bridge" wiring. Concrete mock types
 	// run today; switch a field to its interface (e.g. StorageService) when
 	// a real implementation lands, without changing any method signatures.
-	fs      *services.Filesystem      // OS filesystem access (ListRoot, reveal-in-folder)
+	// NOTE: the Filesystem instance is shared — Workspace composes this same
+	// instance for the library tree, so the dialog, the tree, reveals and
+	// file opens can never disagree about which folder is current.
+	fs      *services.Filesystem      // OS capability: walk, resolve, reveal-in-folder
 	storage *services.InMemoryStorage // persistence (memory today, SQLite tomorrow)
 	docs    *services.Documents       // format extraction (PDF/DOCX/HTML/TXT → blocks)
 	ai      *services.MockAIService   // model access (offline mock; real provider later)
-	work    *services.Workspace       // sessions / saved sources / summary docs
+	work    *services.Workspace       // library tree + sessions / saved sources / summary docs
 }
 
 // NewBackend builds the bridge with default service implementations.
 // Called once by the Wails shell (frontend/app.go: NewApp).
 func NewBackend() *Backend {
+	fs := services.NewFilesystem("research_workspace")
 	return &Backend{
-		fs:      services.NewFilesystem("research_workspace"),
+		fs:      fs,
 		storage: services.NewStorage(),
 		docs:    services.NewDocuments(),
 		ai:      services.NewAI(),
-		work:    services.NewWorkspace(),
+		work:    services.NewWorkspace(fs),
 	}
 }
 
@@ -86,17 +90,38 @@ func (b *Backend) Shutdown(_ context.Context) {}
  * -------------------------------------------------------------------- */
 
 // ShowContainingFolder reveals a document's folder in the OS file manager.
-// Forwards to Filesystem; returns the revealed directory for the UI note.
+// Raw OS capability — stays on Filesystem, not the Workspace curation layer.
+// Returns the revealed directory for the UI note.
 func (b *Backend) ShowContainingFolder(path string) (string, error) {
 	return b.fs.ShowContainingFolder(path)
 }
 
-// ListWorkspace returns the workspace file tree for the reader sidebar as
-// ONE nested root node (with Children), matching the TS FileTreeNode shape.
-// Forwards to Filesystem.ListRoot. A missing workspace dir yields nil + nil
-// (not an error) so the UI shows its empty state.
-func (b *Backend) ListWorkspace() (*models.FileTreeNode, error) {
-	return b.fs.ListRoot()
+// ListLibraryTree returns the curated library tree for the Library rail view
+// as ONE nested root node (with Children). Owned by Workspace (which composes
+// Filesystem); a missing folder yields nil + nil so the UI shows its empty
+// state instead of an error.
+func (b *Backend) ListLibraryTree() (*models.FileTreeNode, error) {
+	return b.work.LibraryTree()
+}
+
+// SetLibraryRoot repoints the library at a new directory (absolute path from
+// the folder dialog). The Wails shell calls this right after the dialog
+// returns, so the next ListLibraryTree reads the newly chosen folder.
+func (b *Backend) SetLibraryRoot(path string) {
+	b.work.SetLibraryRoot(path)
+}
+
+// OpenFile opens one workspace file by its Path token (root-relative, as
+// carried on FileTreeNode). The token is resolved + containment-checked
+// against the workspace root (Filesystem.Resolve — escapes rejected), then
+// dispatched by extension in Documents: plain text reads for real today,
+// PDF/DOCX/… return ErrUnsupportedType so the UI falls back to its mock.
+func (b *Backend) OpenFile(relPath string) (models.OpenedDocument, error) {
+	abs, err := b.fs.Resolve(relPath)
+	if err != nil {
+		return models.OpenedDocument{}, err
+	}
+	return b.docs.OpenFile(abs)
 }
 
 // SetWorkspaceRoot repoints the workspace at a new directory (absolute path

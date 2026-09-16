@@ -48,7 +48,9 @@ AppState = {
 
 - **Browser:** `BrowserSession → tabIds[] → BrowserTab`. A tab *is* a navigation stack; opening/closing tabs never destroys history of other tabs.
 - **Reader:** `ReaderSession → tabIds[] → ReaderTab → Document`. Multiple subtabs open simultaneously; `activeTabId` is the current document. Views stay mounted, so scroll position + edits survive switches.
-- **Source ↔ Document:** `Document.sourceId → Source`; `Source.documentId` points back once a source is opened in the Reader. A source may be opened, closed and reopened — the `reader.doc.open` action reuses the existing tab if one exists.
+- **Source ↔ Document:** `Document.sourceId → Source`; `Source.documentId` points back once a source is opened in the Reader. A source may be opened, closed and reopened — the `reader.doc.open` action reuses the existing tab if one exists. Files opened from disk (`.txt` via `App.OpenFile`) get a fabricated `Source` (`kind: "text"`, `origin` = the root-relative path token) — real blocks, mock provenance.
+- **File ↔ Document location:** `metadata.path` holds the root-relative `FileTreeNode.path` token for disk-opened files (mock docs carry mock paths). "Show in library" navigates the Library rail to that token. Tokens resolve against the CURRENT workspace root — see `tasks.md` §1.1 for the stale-tab bug this creates on folder switch.
+- **Multi-session scaling (known limitation):** `sources` / `documents` / `changes` are flat global maps with no session ownership. `runIncludeInSummary` picks its target with first-summary-wins (`aiController.ts:122`), which breaks the moment two session/summary pairs coexist. Do not build features assuming "the" summary or "the" folder — see `tasks.md` §2 for the `sessionId` design constraint.
 - **Summary ↔ Sources:** `Document.kind === "summary"` carries `sourceIds[]` — the explicit "these papers fed this summary" relationship. The top bar's "N sources contribute to this summary" reads exactly this. Adding a source happens in one reducer case (`summary.addSource`), triggered when an AI merge proposes an insertion from that source.
 - **Change ↔ Activity ↔ Source:** `DocumentChange.activityId → AIActivity` and `change.sourceId → Source` answer "where did this edit come from and who proposed it" (shown in the Inspect view).
 
@@ -91,3 +93,5 @@ native selection (mouseup)
 - "Where are AI activities tracked?" → `state.aiActivities` (history) + `state.browse` (pipeline).
 - "Where is the summary stored?" → `state.documents["…"].kind === "summary"`, with `sourceIds` for provenance.
 - "Where is the pending-change queue?" → `state.changes` filtered by `status: "pending"` per document (`pendingChangesFor`).
+- "Where is the library tree?" → NOT in `AppState`. `ReaderMode.tsx` holds `tree`/`treeError`/`locatePath` in `useState` as re-fetchable server-mirror cache from `backend.library.list()` (mock tree in browser, `walkDir` tree in desktop). Open/file-expand state lives in `FileTree`, keyed by path token.
+- "Where is the chosen folder remembered?" → nowhere persistent. Go `Filesystem.root` (memory only) + a toast. Restart forgets it; `Workspace.Save` does not persist the root (see `tasks.md` §4-adjacent gap list).

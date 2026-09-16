@@ -44,6 +44,18 @@ type FileTreeNode struct {
 	DocumentID string         `json:"documentId,omitempty"`
 }
 
+// OpenedDocument is the result of opening one workspace file: real extracted
+// content for supported types. BlocksJSON decodes to DocumentBlock[] on the
+// TS side (frontend/src/types/domain.ts). Produced by Documents.OpenFile,
+// carried over the boundary by App.OpenFile. Unsupported types come back as
+// an error (ErrUnsupportedType) so the UI can fall back to its mock.
+type OpenedDocument struct {
+	Title      string `json:"title"`
+	BlocksJSON string `json:"blocksJSON"`
+	PageCount  int    `json:"pageCount,omitempty"`
+	Kind       string `json:"kind,omitempty"` // "text" for the plain-text arm
+}
+
 type AIOperation string
 
 const (

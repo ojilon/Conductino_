@@ -67,9 +67,19 @@ reading companion, propose `DocumentChange`s, or revise pending changes.
 
 `backend/services/ai.go` defines the same boundary in Go:
 `AIService.Run(ctx, req, sink)` with `AIEvent { phase | sources | done | error }`.
-`app.StreamAIRequest` emits those events to the frontend (`ai://event`).
+`App.StreamAIRequest` (`frontend/app.go`) emits those events to the frontend (`ai://event`).
 A frontend provider can be a thin wrapper over that event stream — useful
 when the model runs locally (Ollama) or the key must stay server-side.
+
+Status: STAGED, NOT WIRED. No TS code calls `StreamAIRequest` and nothing
+listens for `ai://event` — `aiController.ts` uses the TS `AIProvider`
+exclusively. Wiring it is future work, not a bug.
+
+Boundary mismatch to fix when wiring (do not paper over): Go
+`AIRequest.Selection` is a plain `string` (`backend/models/models.go`), while
+TS `AIRequest.selection` is `{ blockId, text }` (`domain.ts`). The shapes must
+be reconciled at the boundary — either extend the Go struct or flatten on the
+TS side — before a Go provider can receive selections intact.
 
 ## What each operation must produce
 

@@ -29,56 +29,85 @@ const RAIL: { id: RailView; icon: IconName; label: string }[] = [
 ];
 
 /* ------------------------------------------------------------------ */
-/* File tree (mock of backend.filesystem.listRoot)                     */
+/* File tree (Workspace-owned library: backend.library.list)             */
 /* ------------------------------------------------------------------ */
 
 function FileTree({
   node,
   onFile,
+  focusPath,
+  onFocusDone,
 }: {
   node: FileTreeNode;
   onFile: (n: FileTreeNode & { path: string }) => void;
+  /** Path token to expand + highlight + scroll to (from "Show in library"). */
+  focusPath?: string | null;
+  onFocusDone?: () => void;
 }) {
+  // Open/active state is keyed by TOKEN (n.path ?? label-built prefix), not
+  // by id: tokens are the stable cross-world identity (real trees use them
+  // as ids anyway; mock fallback tokens are built the same way here as in
+  // flatFiles, so ancestors always line up).
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [activeId, setActiveId] = useState<string>("");
+  const [activeToken, setActiveToken] = useState<string>("");
 
-  // Open top-level folders whenever a new tree arrives (mock ids like
-  // "ft-papers" no longer exist on real walkDir trees, so nothing is
-  // hardcoded here).
+  const tokenOf = (n: FileTreeNode, path: string) => n.path ?? (path ? `${path}/${n.label}` : n.label);
+
+  // Open top-level folders whenever a new tree arrives.
   useEffect(() => {
     const initial: Record<string, boolean> = {};
     node.children?.forEach((c) => {
-      if (c.kind === "folder") initial[c.id] = true;
+      if (c.kind === "folder") initial[tokenOf(c, "")] = true;
     });
     setOpen(initial);
-    setActiveId("");
+    setActiveToken("");
   }, [node]);
 
+  // "Show in library": expand every ancestor prefix of the focused token,
+  // highlight it, scroll it into view, then report back so the parent clears
+  // the request (one-shot — it must not re-fire on later tree refreshes).
+  useEffect(() => {
+    if (!focusPath) return;
+    const parts = focusPath.split("/");
+    const openNext: Record<string, boolean> = {};
+    let acc = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      acc = acc ? `${acc}/${parts[i]}` : parts[i];
+      openNext[acc] = true;
+    }
+    setOpen((o) => ({ ...o, ...openNext }));
+    setActiveToken(focusPath);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-node-token="${CSS.escape(focusPath)}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    onFocusDone?.();
+  }, [focusPath, node]);
+
   const walk = (n: FileTreeNode, path: string, d: number) => {
-    // Prefer the backend Path token (root-relative, stable); fall back to a
-    // label-built prefix for mock nodes that carry no path.
-    const token = n.path ?? (path ? `${path}/${n.label}` : n.label);
-    const prefix = token;
+    const token = tokenOf(n, path);
     return (
       <div key={n.id}>
         <button
           type="button"
+          data-node-token={token}
           style={{ paddingLeft: `${8 + d * 14}px` }}
           onClick={() => {
-            if (n.kind === "folder") setOpen((o) => ({ ...o, [n.id]: !o[n.id] }));
+            if (n.kind === "folder") setOpen((o) => ({ ...o, [token]: !o[token] }));
             else {
-              setActiveId(n.id);
-              onFile({ ...n, path: prefix });
+              setActiveToken(token);
+              onFile({ ...n, path: token });
             }
           }}
           className={cn(
             "flex w-full items-center gap-1.5 rounded-md py-[5px] pr-2 text-left text-[12.5px] transition-colors",
-            activeId === n.id ? "bg-iris-100/70 text-iris-700" : "text-ink-700 hover:bg-cream-100",
+            activeToken === token ? "bg-iris-100/70 text-iris-700" : "text-ink-700 hover:bg-cream-100",
           )}
         >
           {n.kind === "folder" ? (
             <>
-              <Icon name="chevronRight" size={11} className={cn("text-mute transition-transform", open[n.id] && "rotate-90")} />
+              <Icon name="chevronRight" size={11} className={cn("text-mute transition-transform", open[token] && "rotate-90")} />
               <Icon name="folder" size={13} className="shrink-0 text-mute" />
             </>
           ) : (
@@ -93,7 +122,7 @@ function FileTree({
           )}
           <span className="truncate">{n.label}</span>
         </button>
-        {n.kind === "folder" && open[n.id] && n.children?.map((c) => walk(c, prefix, d + 1))}
+        {n.kind === "folder" && open[token] && n.children?.map((c) => walk(c, token, d + 1))}
       </div>
     );
   };
@@ -107,19 +136,11 @@ function FileTree({
 
 function DocumentInfoPanel({
   doc,
-  onOpenFile,
-  tree,
-  treeError,
-  onPickFolder,
-  onRefreshTree,
+  onShowInLibrary,
 }: {
   doc: Document;
-  onOpenFile: (n: FileTreeNode & { path: string }) => void;
-  /** undefined = loading, null = no workspace yet — owned by ReaderMode. */
-  tree: FileTreeNode | null | undefined;
-  treeError: string | null;
-  onPickFolder: () => void;
-  onRefreshTree: () => void;
+  /** Reveal this file's location in the Library view (no-op when unknown). */
+  onShowInLibrary: (path: string) => void;
 }) {
   const { dispatch } = useApp();
   const [tocActive, setTocActive] = useState<string | null>(null);
@@ -190,34 +211,16 @@ function DocumentInfoPanel({
         </section>
       )}
 
-      {/* file tree */}
+      {/* file location: the tree itself lives in the Library view now */}
       <section>
-        <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">Files</h4>
-        {treeError ? (
-          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
-            <p className="text-[12px] text-ink-700">Couldn’t load the workspace: {treeError}</p>
-            <Button variant="soft" icon="refresh" className="mt-2 w-full" onClick={onRefreshTree}>
-              Retry
-            </Button>
-          </div>
-        ) : tree === undefined ? (
-          <p className="px-1 py-2 text-[12px] text-mute">Loading workspace…</p>
-        ) : tree === null ? (
-          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
-            <p className="text-[12px] text-ink-700">No workspace folder selected.</p>
-            <Button variant="soft" icon="folder" className="mt-2 w-full" onClick={onPickFolder}>
-              Open folder
-            </Button>
-          </div>
+        <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">File</h4>
+        {meta.path ? (
+          <Button variant="soft" icon="book" className="w-full" onClick={() => onShowInLibrary(meta.path!)}>
+            Show in library
+          </Button>
         ) : (
-          <>
-            <p className="mb-1 truncate px-1 text-[11px] text-mute">{tree.label}</p>
-            <FileTree node={tree} onFile={onOpenFile} />
-          </>
+          <p className="px-1 py-1 text-[12px] text-mute">No file location for this document.</p>
         )}
-        <Button variant="soft" icon="folder" className="mt-3 w-full" onClick={onPickFolder}>
-          Open folder
-        </Button>
         <Button
           variant="soft"
           icon="folder"
@@ -289,6 +292,62 @@ function SummarySourcesPanel({ doc }: { doc: Document }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Library (Workspace-owned file tree)                                   */
+/* ------------------------------------------------------------------ */
+
+function LibraryPanel({
+  tree,
+  treeError,
+  onPickFolder,
+  onRefreshTree,
+  onFile,
+  focusPath,
+  onFocusDone,
+}: {
+  /** undefined = loading, null = no folder yet — owned by ReaderMode. */
+  tree: FileTreeNode | null | undefined;
+  treeError: string | null;
+  onPickFolder: () => void;
+  onRefreshTree: () => void;
+  onFile: (n: FileTreeNode & { path: string }) => void;
+  focusPath: string | null;
+  onFocusDone: () => void;
+}) {
+  return (
+    <div className="fade-in space-y-4 px-4 py-4">
+      <section>
+        <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">Library</h4>
+        {treeError ? (
+          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
+            <p className="text-[12px] text-ink-700">Couldn’t load the library: {treeError}</p>
+            <Button variant="soft" icon="refresh" className="mt-2 w-full" onClick={onRefreshTree}>
+              Retry
+            </Button>
+          </div>
+        ) : tree === undefined ? (
+          <p className="px-1 py-2 text-[12px] text-mute">Loading library…</p>
+        ) : tree === null ? (
+          <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
+            <p className="text-[12px] text-ink-700">No library folder selected.</p>
+            <Button variant="soft" icon="folder" className="mt-2 w-full" onClick={onPickFolder}>
+              Choose folder
+            </Button>
+          </div>
+        ) : (
+          <>
+            <p className="mb-1 truncate px-1 text-[11px] text-mute">{tree.label}</p>
+            <FileTree node={tree} onFile={onFile} focusPath={focusPath} onFocusDone={onFocusDone} />
+          </>
+        )}
+      </section>
+      <Button variant="soft" icon="folder" className="w-full" onClick={onPickFolder}>
+        Choose folder
+      </Button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Sidebar shell                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -299,14 +358,21 @@ export default function ReaderSidebar({
   treeError,
   onPickFolder,
   onRefreshTree,
+  locatePath,
+  onLocateDone,
+  onShowInLibrary,
 }: {
   doc: Document | undefined;
   onOpenFile: (n: FileTreeNode & { path: string }) => void;
-  /** Workspace tree owned by ReaderMode: undefined = loading, null = none. */
+  /** Library tree owned by ReaderMode: undefined = loading, null = none. */
   tree: FileTreeNode | null | undefined;
   treeError: string | null;
   onPickFolder: () => void;
   onRefreshTree: () => void;
+  /** Path token the Library tree should reveal (one-shot, see FileTree). */
+  locatePath: string | null;
+  onLocateDone: () => void;
+  onShowInLibrary: (path: string) => void;
 }) {
   const { state, dispatch } = useApp();
   const ui = state.reader.ui;
@@ -366,18 +432,23 @@ export default function ReaderSidebar({
                 doc.kind === "summary" ? (
                   <SummarySourcesPanel doc={doc} />
                 ) : (
-                  <DocumentInfoPanel
-                    doc={doc}
-                    onOpenFile={onOpenFile}
-                    tree={tree}
-                    treeError={treeError}
-                    onPickFolder={onPickFolder}
-                    onRefreshTree={onRefreshTree}
-                  />
+                  <DocumentInfoPanel doc={doc} onShowInLibrary={onShowInLibrary} />
                 )
               ) : (
                 <EmptyState icon="fileText" title="No document open" hint="Open a document from the tabs bar." />
               ))}
+
+            {view === "library" && (
+              <LibraryPanel
+                tree={tree}
+                treeError={treeError}
+                onPickFolder={onPickFolder}
+                onRefreshTree={onRefreshTree}
+                onFile={onOpenFile}
+                focusPath={locatePath}
+                onFocusDone={onLocateDone}
+              />
+            )}
 
             {view === "bookmarks" &&
               (saved.length ? (
@@ -418,13 +489,7 @@ export default function ReaderSidebar({
                 <EmptyState icon="note" title="No notes yet" hint="Select text in a source document and choose “Save note”." />
               ))}
 
-            {view === "library" && (
-              <EmptyState
-                icon="book"
-                title="Local document library"
-                hint="Listed by the Go backend (backend/services/workspace.go). Browse the workspace via the Files tree."
-              />
-            )}
+
 
             {view === "settings" && (
               <div className="fade-in px-4 py-4">

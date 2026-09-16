@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,22 +66,39 @@ func (f *Filesystem) ListRoot() (*models.FileTreeNode, error) {
 	return root, nil
 }
 
-// ShowContainingFolder reveals a path in the OS file manager and returns
-// the revealed directory. path is a FileTreeNode.Path token (see models):
-// an absolute path is used as-is, a relative one is resolved against the
-// workspace root and cleaned, so `sub/../x` cannot escape into a surprise
-// location. Per-platform mechanics are unchanged: Windows selects the file,
-// macOS reveals it, Linux opens the containing directory.
-func (f *Filesystem) ShowContainingFolder(path string) (string, error) {
-	full := path
-	if !filepath.IsAbs(path) {
-		abs, err := filepath.Abs(f.root)
-		if err != nil {
-			return "", err
-		}
-		full = filepath.Join(abs, path)
+// Resolve turns a FileTreeNode.Path token into an absolute disk path and
+// verifies it stays inside the workspace root. Tokens are slash-normalized
+// (FromSlash) and root-relative by contract, but absolute paths are accepted
+// too — as long as they resolve inside the root. Anything escaping the root
+// (crafted `..`, absolute outsiders, unresolvable relatives) is rejected:
+// reads (OpenFile) must never serve files outside the workspace, and reveals
+// must never point the OS at one.
+func (f *Filesystem) Resolve(path string) (string, error) {
+	abs, err := filepath.Abs(f.root)
+	if err != nil {
+		return "", err
 	}
-	full = filepath.Clean(full)
+	clean := path
+	if !filepath.IsAbs(path) {
+		clean = filepath.Join(abs, filepath.FromSlash(path))
+	}
+	clean = filepath.Clean(clean)
+	rel, err := filepath.Rel(abs, clean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes workspace: %q", path)
+	}
+	return clean, nil
+}
+
+// ShowContainingFolder reveals a path in the OS file manager and returns
+// the revealed directory. Resolution and containment go through Resolve;
+// per-platform mechanics are unchanged: Windows selects the file, macOS
+// reveals it, Linux opens the containing directory.
+func (f *Filesystem) ShowContainingFolder(path string) (string, error) {
+	full, err := f.Resolve(path)
+	if err != nil {
+		return "", err
+	}
 	dir := full
 	if !looksLikeDir(full) {
 		dir = filepath.Dir(full)

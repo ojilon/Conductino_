@@ -14,8 +14,12 @@ export function Greet(arg1) {
   return window['go']['frontend']['App']['Greet'](arg1);
 }
 
-export function ListWorkspace() {
-  return window['go']['frontend']['App']['ListWorkspace']();
+export function ListLibraryTree() {
+  return window['go']['frontend']['App']['ListLibraryTree']();
+}
+
+export function OpenFile(arg1) {
+  return window['go']['frontend']['App']['OpenFile'](arg1);
 }
 
 export function SaveWorkspace() {
@@ -24,6 +28,10 @@ export function SaveWorkspace() {
 
 export function SelectFolder() {
   return window['go']['frontend']['App']['SelectFolder']();
+}
+
+export function SetLibraryRoot(arg1) {
+  return window['go']['frontend']['App']['SetLibraryRoot'](arg1);
 }
 
 export function ShowContainingFolder(arg1) {

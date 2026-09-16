@@ -79,10 +79,23 @@ func (a *App) ShowContainingFolder(path string) (string, error) {
 	return a.backend.ShowContainingFolder(path)
 }
 
-// ListWorkspace returns the workspace file tree for the reader sidebar as
-// ONE nested root node (with Children). Nil + nil means "no workspace yet".
-func (a *App) ListWorkspace() (*models.FileTreeNode, error) {
-	return a.backend.ListWorkspace()
+// ListLibraryTree returns the curated library tree for the Library rail view
+// as ONE nested root node (with Children). Nil + nil means "no workspace yet".
+func (a *App) ListLibraryTree() (*models.FileTreeNode, error) {
+	return a.backend.ListLibraryTree()
+}
+
+// SetLibraryRoot repoints the library at a new directory. Exported (and
+// bound) so a future UI flow can set the root without the dialog.
+func (a *App) SetLibraryRoot(path string) {
+	a.backend.SetLibraryRoot(path)
+}
+
+// OpenFile opens one workspace file by its Path token and returns real
+// extracted content for supported types (.txt/.md today). Unsupported types
+// and escapes come back as errors — the UI falls back to its mock extract.
+func (a *App) OpenFile(path string) (models.OpenedDocument, error) {
+	return a.backend.OpenFile(path)
 }
 
 // GetSources returns persisted sources (empty on the in-memory mock).
@@ -130,6 +143,6 @@ func (a *App) SelectFolder() (string, error) {
 	if err != nil || path == "" {
 		return path, err
 	}
-	a.backend.SetWorkspaceRoot(path)
+	a.backend.SetLibraryRoot(path)
 	return path, nil
 }

@@ -13,7 +13,7 @@ import { backend } from "../../services/backend";
 import { ResizablePanel } from "../../components/ui";
 import { uid } from "../../utils/helpers";
 import { makeDocumentFromSource } from "../../mock/data";
-import type { FileTreeNode, Source } from "../../types/domain";
+import type { DocumentBlock, FileTreeNode, Source } from "../../types/domain";
 import ReaderSidebar from "./ReaderSidebar";
 import ReaderTabs, { labelForPath } from "./ReaderTabs";
 import SourceDocumentView from "./DocumentView";
@@ -26,43 +26,62 @@ export default function ReaderMode() {
   const doc = activeReaderDocument(state);
   const session = state.reader.session;
 
-  // Single owner of the workspace tree: undefined = loading, null = no
-  // workspace yet (empty state), FileTreeNode = live tree (mock data in
-  // browser mode, real walkDir tree in the desktop app).
+  // Single owner of the library tree: undefined = loading, null = no
+  // folder yet (empty state), FileTreeNode = live tree (mock data in browser
+  // mode, real Workspace-owned tree in the desktop app).
   const [tree, setTree] = useState<FileTreeNode | null | undefined>(undefined);
   const [treeError, setTreeError] = useState<string | null>(null);
+  // Path token the Library panel should expand + highlight (set by "Show in
+  // library" in the Documents panel, cleared once consumed there).
+  const [locatePath, setLocatePath] = useState<string | null>(null);
 
   const refreshTree = useCallback(async () => {
     try {
       setTreeError(null);
-      setTree(await backend.filesystem.listRoot());
+      setTree(await backend.library.list());
     } catch (e) {
-      setTreeError(e instanceof Error ? e.message : "Could not load workspace");
+      setTreeError(e instanceof Error ? e.message : "Could not load library");
     }
   }, []);
 
   useEffect(() => {
     let live = true;
-    backend.filesystem
-      .listRoot()
+    backend.library
+      .list()
       .then((t) => live && setTree(t))
-      .catch((e: unknown) => live && setTreeError(e instanceof Error ? e.message : "Could not load workspace"));
+      .catch((e: unknown) => live && setTreeError(e instanceof Error ? e.message : "Could not load library"));
     return () => {
       live = false;
     };
   }, []);
 
-  // Folder dialog → backend repoints itself (App.SelectFolder) → re-read.
-  // Null = cancelled (or mock mode): keep the current tree, no toast.
+  // Folder dialog → backend repoints the library itself (App.SelectFolder) →
+  // re-read. Null = cancelled: keep the current tree, no toast. In browser
+  // mock mode there is no dialog at all — say so instead of staying silent.
   const pickFolder = useCallback(async () => {
     const picked = await backend.filesystem.selectFolder().catch(() => null);
-    if (picked == null) return;
+    if (picked == null) {
+      if (backend.mode === "mock") {
+        dispatch({ type: "toast", message: "Folder picking needs the desktop app — run `wails dev`." });
+      }
+      return;
+    }
     await refreshTree();
-    dispatch({ type: "toast", message: `Workspace: ${picked}` });
+    dispatch({ type: "toast", message: `Library: ${picked}` });
   }, [refreshTree, dispatch]);
 
-  /** Open a workspace file as a reader document (mock document factory). */
-  const openFile = (node: FileTreeNode & { path: string }) => {
+  // Documents panel → Library panel handoff: switch rail views and ask the
+  // tree to reveal this file's location.
+  const showInLibrary = useCallback(
+    (path: string) => {
+      setLocatePath(path);
+      dispatch({ type: "reader.ui", patch: { railView: "library", sidebarOpen: true } });
+    },
+    [dispatch],
+  );
+
+  /** Open a workspace file as a reader document. */
+  const openFile = async (node: FileTreeNode & { path: string }) => {
     if (node.documentId) {
       const existingTab = session.tabIds.find((t) => state.reader.tabs[t]?.documentId === node.documentId);
       if (existingTab) {
@@ -79,10 +98,62 @@ export default function ReaderMode() {
       });
       return;
     }
-    // File without a loaded document → mock-extract it into the DocumentModel.
+    // File without a loaded document → try the real pipe first
+    // (App.OpenFile: extension-dispatched extraction, .txt/.md today).
+    // Anything else (mock mode, unsupported type, read error) falls back to
+    // the mock factory so the click still opens something demonstrable.
+    const ext = (node.ext ?? "pdf").toLowerCase();
+    try {
+      const opened = await backend.filesystem.openFile(node.path);
+      if (opened) {
+        const parsed: unknown = JSON.parse(opened.blocksJSON);
+        const blocks = (parsed as { blocks: DocumentBlock[] }).blocks;
+        if (!Array.isArray(blocks)) throw new Error("bad blocks shape");
+        const sourceId = uid("src");
+        const docId = uid("doc");
+        const firstText = blocks
+          .map((b) => b.segments.map((s) => s.text).join(""))
+          .find((t) => t.trim()) ?? "";
+        const source: Source = {
+          id: sourceId,
+          kind: "text",
+          title: opened.title || labelForPath(node.label),
+          origin: node.path, // root-relative token, not a built path
+          typeLabel: `${ext.toUpperCase()} document`,
+          abstract: firstText.slice(0, 280),
+          saved: false,
+          inReader: true,
+          documentId: docId,
+        };
+        dispatch({ type: "source.add", source });
+        dispatch({
+          type: "doc.add",
+          document: {
+            id: docId,
+            kind: "source",
+            sourceId,
+            metadata: {
+              title: source.title,
+              format: "text",
+              pageCount: opened.pageCount ?? 1,
+              path: node.path,
+            },
+            blocks,
+            highlights: [],
+            currentPage: 1,
+          },
+        });
+        const label = source.title;
+        dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: label.length > 18 ? `${label.slice(0, 16)}…` : label });
+        dispatch({ type: "toast", message: `Opened ${node.label}` });
+        return;
+      }
+    } catch {
+      // fall through to the mock factory below
+    }
+    // Mock fallback: fabricate the DocumentModel locally.
     const sourceId = uid("src");
     const docId = uid("doc");
-    const ext = node.ext ?? "pdf";
     const title = labelForPath(node.label);
     const source: Source = {
       id: sourceId,
@@ -110,6 +181,9 @@ export default function ReaderMode() {
         treeError={treeError}
         onPickFolder={pickFolder}
         onRefreshTree={refreshTree}
+        locatePath={locatePath}
+        onLocateDone={() => setLocatePath(null)}
+        onShowInLibrary={showInLibrary}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">

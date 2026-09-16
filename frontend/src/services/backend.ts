@@ -2,17 +2,15 @@
  * Go backend service boundary (Wails).
  *
  * The React app never touches the filesystem, database or network
- * directly. It calls these interfaces; today they are served by
- * in-memory mocks, tomorrow by Wails-bound Go methods
+ * directly. It calls these interfaces; library + filesystem are served by
+ * Wails-bound Go methods when the desktop shell is present
  * (window.go.frontend.App.* — bound in frontend/app.go, bridged via
- * backend/main.go which stays pure Go with no Wails imports).
+ * backend/main.go which stays pure Go with no Wails imports), and by
+ * in-memory mocks in browser mode. Storage/sources/workspace are still
+ * mocked in both modes.
  *
- * To replace a mock with the real Go implementation:
- *   1. Generate Wails bindings for the matching Go method
- *      (backend/services/*.go).
- *   2. Swap the mock for a `WailsBackend` implementation of
- *      `BackendServices` in `createBackend()` below — nothing else
- *      in the app changes.
+ * To wire another service to Go: add its methods to the WailsApp interface
+ * and Wails* implementation below — nothing else in the app changes.
  *
  * See docs/architecture.md §"React ↔ Go" and backend/README.md.
  */
@@ -20,28 +18,72 @@
 import type { FileTreeNode } from "../types/domain";
 import { fileTreeMock } from "../mock/data";
 
+/**
+ * Wails-bound Go shell (frontend/app.go, generated at runtime — NOT a build
+ * artifact to import). Method names match the Go exported methods exactly;
+ * Go `(T, error)` becomes a Promise<T> that rejects on error, and a nil
+ * `*FileTreeNode` arrives as null.
+ */
+interface WailsApp {
+  ListLibraryTree(): Promise<FileTreeNode | null>;
+  SelectFolder(): Promise<string>;
+  OpenFile(path: string): Promise<OpenedFile>;
+  ShowContainingFolder(path: string): Promise<string>;
+}
+
 declare global {
   interface Window {
-    go?: { frontend?: { App?: unknown } };
+    go?: { frontend?: { App?: WailsApp } };
   }
+}
+
+/** Non-null only inside the desktop build (wails dev / wails build). */
+function wailsApp(): WailsApp | null {
+  return window.go?.frontend?.App ?? null;
+}
+
+/**
+ * Real content of one workspace file, as returned by App.OpenFile.
+ * blocksJSON decodes to DocumentBlock[] (types/domain.ts). Null = mock mode
+ * or unsupported type — the caller falls back to mock extraction.
+ */
+export interface OpenedFile {
+  title: string;
+  blocksJSON: string;
+  pageCount?: number;
+  kind?: string;
 }
 
 export interface FilesystemService {
   /**
-   * Root tree of the workspace folder (ONE nested root node, as returned by
-   * Go walkDir via App.ListWorkspace). Null means "no workspace yet" — the
-   * UI shows its empty state, not an error.
-   */
-  listRoot(): Promise<FileTreeNode | null>;
-  /**
    * OS folder dialog (App.SelectFolder). Returns the picked absolute path,
-   * or null when cancelled. The Go side repoints the workspace itself, so
-   * callers just re-call listRoot() afterwards. Null in mock/browser mode
-   * (no dialog exists there) — callers treat it as "keep current tree".
+   * or null when cancelled. The Go side repoints the library itself, so
+   * callers just re-call library.list() afterwards. Null in mock/browser
+   * mode (no dialog exists there) — callers treat it as "keep current tree".
    */
   selectFolder(): Promise<string | null>;
+  /**
+   * Open one workspace file by its Path token (App.OpenFile → Documents).
+   * Real content for .txt/.md today; null in mock mode or for unsupported
+   * types (caller falls back to the mock document factory).
+   */
+  openFile(path: string): Promise<OpenedFile | null>;
   /** OS "show in folder" — a Go-only capability. */
   showContainingFolder(path: string): Promise<{ ok: boolean; note: string }>;
+}
+
+/**
+ * Curated library view over the chosen folder (Workspace service:
+ * App.ListLibraryTree). Separate from FilesystemService on purpose — raw
+ * OS capability (walk/reveal/dialog) vs. the research library (root choice,
+ * nesting, later persistence + file↔document mapping).
+ */
+export interface LibraryService {
+  /**
+   * Library tree (ONE nested root node). Null means "no folder yet" — the
+   * UI shows its empty state, not an error.
+   */
+  list(): Promise<FileTreeNode | null>;
 }
 
 export interface StorageService {
@@ -62,6 +104,7 @@ export interface WorkspaceService {
 export interface BackendServices {
   readonly mode: "mock" | "wails";
   filesystem: FilesystemService;
+  library: LibraryService;
   storage: StorageService;
   sources: SourceService;
   workspace: WorkspaceService;
@@ -74,13 +117,13 @@ export interface BackendServices {
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MockFilesystem: FilesystemService = {
-  async listRoot() {
-    await delay(120);
-    return fileTreeMock;
-  },
   async selectFolder() {
     await delay(50);
     return null; // no OS dialog in mock/browser mode — caller keeps current tree
+  },
+  async openFile() {
+    await delay(50);
+    return null; // no extractor in mock mode — caller uses the mock factory
   },
   async showContainingFolder(path) {
     await delay(200);
@@ -88,6 +131,13 @@ const MockFilesystem: FilesystemService = {
       ok: true,
       note: `Would reveal “${path}” in the OS file manager (Go: os.StartProcess — backend/services/filesystem.go).`,
     };
+  },
+};
+
+const MockLibrary: LibraryService = {
+  async list() {
+    await delay(120);
+    return fileTreeMock;
   },
 };
 
@@ -120,12 +170,65 @@ const MockWorkspace: WorkspaceService = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Wails implementation (desktop build only)                           */
+/* ------------------------------------------------------------------ */
+
+// Temporary, direct push-through to the Go shell — no caching, no shaping.
+// Its only job is proving the extraction pipe end-to-end: dialog → walkDir
+// tree → .txt bytes → rendered tab. Rendering stays exactly as-is.
+const WailsFilesystem: FilesystemService = {
+  async selectFolder() {
+    const app = wailsApp();
+    if (!app) return null;
+    const picked = await app.SelectFolder();
+    return picked || null; // Go returns "" on cancel
+  },
+  async openFile(path) {
+    const app = wailsApp();
+    if (!app) return null;
+    try {
+      return await app.OpenFile(path);
+    } catch {
+      return null; // unsupported type / read error → caller uses mock fallback
+    }
+  },
+  async showContainingFolder(path) {
+    const app = wailsApp();
+    if (!app) return { ok: false, note: "Desktop bridge unavailable (browser mock mode)." };
+    try {
+      const dir = await app.ShowContainingFolder(path);
+      return { ok: true, note: `Revealed in file manager: ${dir}` };
+    } catch (e) {
+      return { ok: false, note: e instanceof Error ? e.message : "Reveal failed" };
+    }
+  },
+};
+
+const WailsLibrary: LibraryService = {
+  async list() {
+    return wailsApp()?.ListLibraryTree() ?? null;
+  },
+};
+
+/* ------------------------------------------------------------------ */
 
 export function createBackend(): BackendServices {
-  // Future: if (window.go?.frontend?.App) return new WailsBackend(...);
+  // Desktop build: the Go shell is present — use it for the library +
+  // filesystem pipe (storage/sources/workspace stay mocked for now).
+  if (wailsApp()) {
+    return {
+      mode: "wails",
+      filesystem: WailsFilesystem,
+      library: WailsLibrary,
+      storage: MockStorage,
+      sources: MockSources,
+      workspace: MockWorkspace,
+    };
+  }
   return {
     mode: "mock",
     filesystem: MockFilesystem,
+    library: MockLibrary,
     storage: MockStorage,
     sources: MockSources,
     workspace: MockWorkspace,
