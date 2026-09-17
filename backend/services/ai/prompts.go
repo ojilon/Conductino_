@@ -41,6 +41,7 @@ const (
 const (
 	tokenBudgetExplanation = 2048
 	tokenBudgetShort       = 1024
+	tokenBudgetChat        = 2048
 )
 
 func selectionText(req models.AIRequest) string {
@@ -62,6 +63,33 @@ func withContext(base string, req models.AIRequest) string {
 	if pack := strings.TrimSpace(req.ContextPack); pack != "" {
 		b.WriteString("\n\n### Document context\n")
 		b.WriteString(pack)
+	}
+	return b.String()
+}
+
+// formatChatHistory turns prior turns into a readable transcript block.
+// Roles are lowercased for the model; empty content is skipped.
+func formatChatHistory(turns []models.ChatTurn) string {
+	if len(turns) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Conversation so far\n")
+	for _, t := range turns {
+		role := strings.ToLower(strings.TrimSpace(t.Role))
+		content := strings.TrimSpace(t.Content)
+		if content == "" {
+			continue
+		}
+		switch role {
+		case "user", "assistant", "system":
+		default:
+			role = "user"
+		}
+		b.WriteString(role)
+		b.WriteString(": ")
+		b.WriteString(content)
+		b.WriteString("\n\n")
 	}
 	return b.String()
 }
@@ -100,6 +128,25 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 		}
 		base := "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft
 		return withContext(base, req), kindRevision, tokenBudgetShort
+	case models.OpChat:
+		// Multi-turn: history + current user message (Query or CustomPrompt).
+		current := query
+		if current == "" {
+			current = strings.TrimSpace(req.CustomPrompt)
+		}
+		if current == "" {
+			current = sel
+		}
+		var b strings.Builder
+		b.WriteString("You are a research assistant helping a scholar read and reason about documents. ")
+		b.WriteString("Answer clearly and concisely. Prefer evidence from the document context when provided. ")
+		b.WriteString("Always finish your final sentence.\n\n")
+		if hist := formatChatHistory(req.MessageHistory); hist != "" {
+			b.WriteString(hist)
+		}
+		b.WriteString("### Current user message\n")
+		b.WriteString(current)
+		return withContext(b.String(), req), kindExplanation, tokenBudgetChat
 	default:
 		return "", "", 0
 	}
