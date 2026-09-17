@@ -51,13 +51,53 @@ func (a *App) Startup(ctx context.Context) {
 	}
 }
 
-// ListTree returns the workspace file tree.
+// Shutdown releases backend resources (SQLite handle) on app exit.
+func (a *App) Shutdown(_ context.Context) {
+	// Backend has no Close exposed; nothing to flush yet (SQLite closes on
+	// process exit). Kept so wails.Run OnShutdown always has a target.
+}
+
+// ListTree returns the workspace file tree (legacy slice wrapper).
+// New code should call ListLibraryTree (single nested root node).
 func (a *App) ListTree() ([]models.FileTreeNode, error) {
 	return a.backend.ListTree(a.ctx)
 }
 
+// ListLibraryTree is the canonical library call the TS frontend binds to
+// (window.go.frontend.App.ListLibraryTree). A nil *FileTreeNode arrives in
+// JS as null — the UI shows "Choose folder", not an error.
+func (a *App) ListLibraryTree() (*models.FileTreeNode, error) {
+	return a.backend.ListLibraryTree()
+}
+
+// SelectFolder opens the OS folder dialog, repoints the library at the
+// picked folder, and returns its absolute path ("" on cancel). The TS
+// caller re-reads library.list() + libraryRoot() afterwards.
+func (a *App) SelectFolder() (string, error) {
+	picked, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose research folder",
+	})
+	if err != nil {
+		return "", err
+	}
+	if picked == "" {
+		return "", nil // cancelled — caller keeps the current tree
+	}
+	if err := a.backend.SetLibraryRoot(a.ctx, picked); err != nil {
+		return "", err
+	}
+	return picked, nil
+}
+
+// ShowContainingFolder reveals a workspace path in the OS file manager.
+func (a *App) ShowContainingFolder(path string) (string, error) {
+	return a.backend.ShowContainingFolder(path)
+}
+
 // OpenFile extracts a document from a path under the library root.
-func (a *App) OpenFile(path string) (*models.Document, error) {
+// Returns OpenedDocument (BlocksJSON wire payload + typed Reason on failure),
+// matching Documents.OpenFile — never a fabricated document.
+func (a *App) OpenFile(path string) (*models.OpenedDocument, error) {
 	return a.backend.OpenFile(a.ctx, path)
 }
 
@@ -86,10 +126,21 @@ func (a *App) StorageEngine() string {
 	return a.backend.StorageEngine()
 }
 
-// RunAI streams an AI operation. Events are emitted as "ai:event".
+// RunAI streams an AI operation. Events are emitted as "ai:event" (legacy).
+// New code should call StreamAIRequest, which emits "ai://event" — the
+// channel services/ai.ts actually subscribes to.
 func (a *App) RunAI(req models.AIRequest) error {
 	return a.backend.RunAI(a.ctx, req, func(ev models.AIEvent) {
 		runtime.EventsEmit(a.ctx, "ai:event", ev)
+	})
+}
+
+// StreamAIRequest is the AI bridge services/ai.ts binds to
+// (window.go.frontend.App.StreamAIRequest). Progress + results stream back
+// on the shared "ai://event" channel, demultiplexed by requestId.
+func (a *App) StreamAIRequest(req models.AIRequest) error {
+	return a.backend.RunAI(a.ctx, req, func(ev models.AIEvent) {
+		runtime.EventsEmit(a.ctx, "ai://event", ev)
 	})
 }
 

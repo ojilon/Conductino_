@@ -2,7 +2,10 @@ module Conductino
 
 go 1.25.0
 
-require github.com/wailsapp/wails/v2 v2.15.0
+require (
+	github.com/wailsapp/wails/v2 v2.15.0
+	modernc.org/sqlite v1.34.5
+)
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
@@ -39,7 +42,6 @@ require (
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
-	modernc.org/sqlite v1.34.5 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.15.0 => D:\Dev\go-workspace\pkg\mod

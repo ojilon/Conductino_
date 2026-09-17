@@ -139,6 +139,8 @@ func (s *SQLiteStorage) GetSetting(key string) (string, bool) {
 }
 
 func (s *SQLiteStorage) UpsertWorkspace(ws WorkspaceRecord) error {
+	// Default zero timestamps to now (millis). Records use int64 UnixMilli to
+	// match the INTEGER updated_at column — never RFC3339 strings.
 	if ws.UpdatedAt == 0 {
 		ws.UpdatedAt = time.Now().UnixMilli()
 	}
@@ -201,6 +203,8 @@ func (s *SQLiteStorage) ListWorkspaces() ([]WorkspaceRecord, error) {
 }
 
 func (s *SQLiteStorage) UpsertDocument(doc DocumentRecord) error {
+	// Document content travels as BlocksJSON (+ MetaJSON), mirroring the
+	// frontend DocumentBlock[] wire shape — not a plain Body string.
 	if doc.UpdatedAt == 0 {
 		doc.UpdatedAt = time.Now().UnixMilli()
 	}

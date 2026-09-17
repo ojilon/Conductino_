@@ -29,6 +29,8 @@ export namespace models {
 	    contextPack?: string;
 	    messageHistory?: ChatTurn[];
 	    mode?: string;
+	    summaryContent?: string;
+	    primarySummaryId?: string;
 	    requestId?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -51,6 +53,8 @@ export namespace models {
 	        this.contextPack = source["contextPack"];
 	        this.messageHistory = this.convertValues(source["messageHistory"], ChatTurn);
 	        this.mode = source["mode"];
+	        this.summaryContent = source["summaryContent"];
+	        this.primarySummaryId = source["primarySummaryId"];
 	        this.requestId = source["requestId"];
 	    }
 	
@@ -139,36 +143,111 @@ export namespace models {
 	        this.detail = source["detail"];
 	    }
 	}
-	export class Source {
+
+}
+
+export namespace services {
+	
+	export class ChangeRecord {
 	    id: string;
-	    kind: string;
-	    title: string;
-	    origin: string;
-	    url?: string;
-	    typeLabel: string;
-	    abstract: string;
-	    rank?: number;
-	    relevance?: string;
-	    saved: boolean;
-	    readerDocId?: string;
+	    documentId: string;
+	    workspaceId?: string;
+	    type: string;
+	    blockId?: string;
+	    oldContent?: string;
+	    newContent?: string;
+	    status: string;
+	    sourceId?: string;
+	    activityId?: string;
+	    createdAt?: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new Source(source);
+	        return new ChangeRecord(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.kind = source["kind"];
+	        this.documentId = source["documentId"];
+	        this.workspaceId = source["workspaceId"];
+	        this.type = source["type"];
+	        this.blockId = source["blockId"];
+	        this.oldContent = source["oldContent"];
+	        this.newContent = source["newContent"];
+	        this.status = source["status"];
+	        this.sourceId = source["sourceId"];
+	        this.activityId = source["activityId"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class ChatMessageRecord {
+	    id: string;
+	    threadId: string;
+	    role: string;
+	    content: string;
+	    documentId?: string;
+	    createdAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChatMessageRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.threadId = source["threadId"];
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.documentId = source["documentId"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class ChatThreadRecord {
+	    id: string;
+	    workspaceId: string;
+	    documentId?: string;
+	    title?: string;
+	    createdAt?: number;
+	    updatedAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChatThreadRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspaceId = source["workspaceId"];
+	        this.documentId = source["documentId"];
 	        this.title = source["title"];
-	        this.origin = source["origin"];
-	        this.url = source["url"];
-	        this.typeLabel = source["typeLabel"];
-	        this.abstract = source["abstract"];
-	        this.rank = source["rank"];
-	        this.relevance = source["relevance"];
-	        this.saved = source["saved"];
-	        this.readerDocId = source["readerDocId"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class DocumentRecord {
+	    id: string;
+	    workspaceId: string;
+	    kind: string;
+	    sourceId?: string;
+	    title: string;
+	    blocksJson?: string;
+	    metaJson?: string;
+	    updatedAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DocumentRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspaceId = source["workspaceId"];
+	        this.kind = source["kind"];
+	        this.sourceId = source["sourceId"];
+	        this.title = source["title"];
+	        this.blocksJson = source["blocksJson"];
+	        this.metaJson = source["metaJson"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 

@@ -205,13 +205,20 @@ const MockWorkspace: WorkspaceService = {
 const WailsFilesystem: FilesystemService = {
   async selectFolder() {
     const app = wailsApp();
-    if (!app) return null;
-    const picked = await app.SelectFolder();
-    return picked || null; // Go returns "" on cancel
+    // Guard method existence: an older bound shell (ListTree era) has no
+    // SelectFolder — return null so the caller keeps the current tree
+    // instead of throwing "app.SelectFolder is not a function".
+    if (!app || typeof app.SelectFolder !== "function") return null;
+    try {
+      const picked = await app.SelectFolder();
+      return picked || null; // Go returns "" on cancel
+    } catch {
+      return null;
+    }
   },
   async openFile(path) {
     const app = wailsApp();
-    if (!app) return null;
+    if (!app || typeof app.OpenFile !== "function") return null;
     // No catch-and-null here (tasks.md 1.2): a read failure must reach the
     // caller as a typed `reason` value or a rejection — never collapse into
     // the mock path. Only truly unexpected bridge errors reject.
@@ -220,6 +227,11 @@ const WailsFilesystem: FilesystemService = {
   async showContainingFolder(path) {
     const app = wailsApp();
     if (!app) return { ok: false, note: "Desktop bridge unavailable (browser mock mode)." };
+    // Older shells never bound ShowContainingFolder — report it instead of
+    // throwing a TypeError the caller never expects.
+    if (typeof app.ShowContainingFolder !== "function") {
+      return { ok: false, note: "Reveal needs a newer desktop build — restart `wails dev`." };
+    }
     try {
       const dir = await app.ShowContainingFolder(path);
       return { ok: true, note: `Revealed in file manager: ${dir}` };
@@ -229,7 +241,7 @@ const WailsFilesystem: FilesystemService = {
   },
   async libraryRoot() {
     const app = wailsApp();
-    if (!app) return null;
+    if (!app || typeof app.LibraryRoot !== "function") return null;
     try {
       const root = await app.LibraryRoot();
       return root || null;
@@ -241,33 +253,58 @@ const WailsFilesystem: FilesystemService = {
 
 const WailsLibrary: LibraryService = {
   async list() {
-    return wailsApp()?.ListLibraryTree() ?? null;
+    const app = wailsApp();
+    // Method-missing guard: pre-fix shells only bound ListTree (slice), so
+    // calling a missing ListLibraryTree would throw and the panel would
+    // show "Couldn't load the library / Retry" instead of the tree.
+    const fn = app && (app as unknown as { ListLibraryTree?: unknown }).ListLibraryTree;
+    if (typeof fn !== "function") {
+      throw new Error("Library bridge outdated — restart `wails dev` to rebind Go methods.");
+    }
+    const raw = (await (fn as () => Promise<FileTreeNode | FileTreeNode[] | null>)()) ?? null;
+    // Defensive unwrap: very old shells returned a one-element slice.
+    if (Array.isArray(raw)) return raw[0] ?? null;
+    return raw;
   },
 };
 
 /* ------------------------------------------------------------------ */
 
+const mockBackend: BackendServices = {
+  mode: "mock",
+  filesystem: MockFilesystem,
+  library: MockLibrary,
+  storage: MockStorage,
+  sources: MockSources,
+  workspace: MockWorkspace,
+};
+
+const wailsBackend: BackendServices = {
+  mode: "wails",
+  filesystem: WailsFilesystem,
+  library: WailsLibrary,
+  storage: MockStorage,
+  sources: MockSources,
+  workspace: MockWorkspace,
+};
+
 export function createBackend(): BackendServices {
-  // Desktop build: the Go shell is present — use it for the library +
-  // filesystem pipe (storage/sources/workspace stay mocked for now).
-  if (wailsApp()) {
-    return {
-      mode: "wails",
-      filesystem: WailsFilesystem,
-      library: WailsLibrary,
-      storage: MockStorage,
-      sources: MockSources,
-      workspace: MockWorkspace,
-    };
-  }
-  return {
-    mode: "mock",
-    filesystem: MockFilesystem,
-    library: MockLibrary,
-    storage: MockStorage,
-    sources: MockSources,
-    workspace: MockWorkspace,
-  };
+  // Probe per call-site via the `backend` proxy below — this snapshot is
+  // only for tests / one-shot checks. Desktop build uses Wails impls for
+  // the library + filesystem pipe (storage/sources/workspace stay mocked).
+  if (wailsApp()) return wailsBackend;
+  return mockBackend;
 }
 
-export const backend: BackendServices = createBackend();
+// Live probe: window.go is injected async by the Wails runtime, AFTER this
+// module first loads. A single `createBackend()` snapshot would freeze
+// mode="mock" even under `wails dev`. The proxy re-probes on every property
+// access, so library/folder calls use the desktop bridge as soon as it
+// appears — and `backend.mode` flips without a reload.
+export const backend: BackendServices = new Proxy({} as BackendServices, {
+  get(_t, p: keyof BackendServices) {
+    const live = wailsApp() ? wailsBackend : mockBackend;
+    if (p === "mode") return live.mode;
+    return live[p];
+  },
+});
