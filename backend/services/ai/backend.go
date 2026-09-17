@@ -19,15 +19,7 @@ type ModelBackend interface {
 // loadAIMode reads AI_MODE from env / .ai.env (single | failover | auto).
 // Default auto: failover when a secondary key exists, else single.
 func loadAIMode() string {
-	m := strings.ToLower(strings.TrimSpace(os.Getenv("AI_MODE")))
-	if m == "" {
-		m = strings.ToLower(strings.TrimSpace(readKeyFile("backend/.ai.env", "AI_MODE")))
-	}
-	if m == "" {
-		if exe, err := os.Executable(); err == nil {
-			m = strings.ToLower(strings.TrimSpace(readKeyFile(filepath.Join(filepath.Dir(exe), ".ai.env"), "AI_MODE")))
-		}
-	}
+	m := strings.ToLower(strings.TrimSpace(loadEnvKey("AI_MODE")))
 	switch m {
 	case "single", "failover", "dual", "auto":
 		return m
@@ -36,12 +28,29 @@ func loadAIMode() string {
 	}
 }
 
+// loadAIPrimary reads AI_PRIMARY (gemini | groq | openrouter).
+// Empty → gemini when Gemini key exists, else first configured secondary.
+func loadAIPrimary() string {
+	p := strings.ToLower(strings.TrimSpace(loadEnvKey("AI_PRIMARY")))
+	switch p {
+	case "gemini", "groq", "openrouter":
+		return p
+	default:
+		return ""
+	}
+}
+
+// loadEnvKey looks up a KEY from process env, then dotenv files.
+// Paths match resolveAPIKey so GROQ_API_KEY in repo-root .ai.env works
+// the same way GEMINI_API_KEY does (wails dev runs from the repo root).
 func loadEnvKey(name string) string {
 	if k := strings.TrimSpace(os.Getenv(name)); k != "" {
 		return k
 	}
-	if k := readKeyFile("backend/.ai.env", name); k != "" {
-		return k
+	for _, p := range []string{".ai.env", "backend/.ai.env"} {
+		if k := readKeyFile(p, name); k != "" {
+			return k
+		}
 	}
 	if exe, err := os.Executable(); err == nil {
 		if k := readKeyFile(filepath.Join(filepath.Dir(exe), ".ai.env"), name); k != "" {
@@ -52,6 +61,7 @@ func loadEnvKey(name string) string {
 }
 
 // isRateLimitOrUnavailable classifies errors that should trigger failover.
+// Intentionally broad: free-tier exhaustion often returns varied wording.
 func isRateLimitOrUnavailable(err error) bool {
 	if err == nil {
 		return false
@@ -59,7 +69,9 @@ func isRateLimitOrUnavailable(err error) bool {
 	s := strings.ToLower(err.Error())
 	for _, needle := range []string{
 		"429", "rate limit", "rate-limit", "quota", "resource exhausted",
-		"503", "unavailable", "overloaded", "capacity",
+		"resource_exhausted", "503", "unavailable", "overloaded", "capacity",
+		"too many requests", "limit exceeded", "exceeded your current",
+		"billing", "permission denied", "api key not valid",
 	} {
 		if strings.Contains(s, needle) {
 			return true
