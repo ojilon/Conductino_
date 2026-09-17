@@ -25,6 +25,7 @@ import { reducePart2 } from "./reducePart2";
 import { reducePart3 } from "./reducePart3";
 import { reducePart4 } from "./reducePart4";
 import { reduceWorkspace } from "./reduceWorkspace";
+import { reduceChat } from "./reduceChat";
 
 export type { Action } from "./actions";
 
@@ -46,6 +47,9 @@ function createInitialState(): AppState {
       },
     };
   }
+  if (!s.chat?.byId) {
+    s.chat = { activeId: null, byId: {} };
+  }
   const wsId = s.workspace.activeId ?? DEMO;
   for (const src of Object.values(s.sources)) {
     if (!src.workspaceId) src.workspaceId = wsId;
@@ -62,6 +66,7 @@ function createInitialState(): AppState {
 function reducer(state: AppState, action: Action): AppState {
   return (
     reduceWorkspace(state, action) ??
+    reduceChat(state, action) ??
     reducePart1a(state, action) ??
     reducePart1b(state, action) ??
     reducePart2(state, action) ??

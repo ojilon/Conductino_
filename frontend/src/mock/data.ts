@@ -1,7 +1,5 @@
 /**
- * Lumen mock data — minimal seed (Phase 2 workspace included).
- * Full research mock content was temporarily reduced to clear a GitHub
- * write-size limit; restore from commit 77f8d05 if needed for richer demos.
+ * Lumen mock data — minimal seed (Phase 2 workspace + Phase 4 chat included).
  */
 import type {
   AppState,
@@ -99,6 +97,7 @@ export function makeDocumentFromSource(sourceId: string, source: Source, docId: 
 export function createInitialState(): AppState {
   return {
     mode: "reader",
+    chat: { activeId: null, byId: {} },
     workspace: {
       activeId: "ws-demo",
       byId: {
