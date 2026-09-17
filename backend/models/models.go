@@ -107,6 +107,14 @@ type AIRequest struct {
 	Selection     string `json:"selection,omitempty"`
 	SelectionText string `json:"selectionText,omitempty"`
 	BlockID       string `json:"blockId,omitempty"`
+	// Phase 2/3 workspace + oneshot context
+	WorkspaceID            string `json:"workspaceId,omitempty"`
+	CustomPrompt           string `json:"customPrompt,omitempty"`
+	IncludeDocumentContext *bool  `json:"includeDocumentContext,omitempty"`
+	// ContextPack is a budgeted string (selection window + outline) built
+	// by the frontend while document blocks live in AppState. The AI
+	// service appends it to the model prompt.
+	ContextPack string `json:"contextPack,omitempty"`
 	// RequestID correlates events back to the originating call: every AIEvent
 	// the backend emits for this request echoes it, so concurrent requests
 	// never cross-talk on the shared "ai://event" channel.
