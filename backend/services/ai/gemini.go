@@ -99,10 +99,24 @@ func (g *GeminiService) generate(ctx context.Context, prompt string, maxTokens i
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return "", fmt.Errorf("AI response was not understood (status %d).", resp.StatusCode)
 	}
+	if resp.StatusCode == 429 {
+		detail := "rate limited"
+		if decoded.Error != nil && strings.TrimSpace(decoded.Error.Message) != "" {
+			detail = strings.TrimSpace(decoded.Error.Message)
+		}
+		return "", fmt.Errorf("429 rate limit (gemini): %s", truncateRunes(detail, 200))
+	}
+	if resp.StatusCode >= 500 {
+		return "", fmt.Errorf("503 unavailable (gemini, status %d)", resp.StatusCode)
+	}
 	if decoded.Error != nil {
 		detail := strings.TrimSpace(decoded.Error.Message)
 		if detail == "" {
 			detail = fmt.Sprintf("status %d", decoded.Error.Code)
+		}
+		low := strings.ToLower(detail)
+		if strings.Contains(low, "quota") || strings.Contains(low, "rate") || strings.Contains(low, "resource exhausted") {
+			return "", fmt.Errorf("429 rate limit (gemini): %s", truncateRunes(detail, 200))
 		}
 		return "", fmt.Errorf("AI unavailable now: %s", truncateRunes(detail, 220))
 	}
