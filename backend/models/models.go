@@ -125,6 +125,10 @@ type AIRequest struct {
 	// Phase 4 multi-turn history (prior turns; current query is Query/Selection).
 	MessageHistory []ChatTurn `json:"messageHistory,omitempty"`
 	Mode           string     `json:"mode,omitempty"` // "oneshot" | "chat"
+	// Phase 5: summary snapshot for read_summary / propose_summary_edit tools.
+	// Frontend sends a truncated plain-text view until Phase 6 storage owns it.
+	SummaryContent    string `json:"summaryContent,omitempty"`
+	PrimarySummaryID  string `json:"primarySummaryId,omitempty"`
 	// RequestID correlates events back to the originating call: every AIEvent
 	// the backend emits for this request echoes it, so concurrent requests
 	// never cross-talk on the shared "ai://event" channel.
