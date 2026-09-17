@@ -156,6 +156,17 @@ export interface AIRequest {
   sourceId?: ID;
   selection?: { blockId: ID; text: string };
   changeId?: ID;
+  /** Phase 2/3: owning workspace when known. */
+  workspaceId?: ID;
+  /** User-authored instruction (selection toolbar / chat composer). */
+  customPrompt?: string;
+  /** When true (default for explain family), attach document context pack. */
+  includeDocumentContext?: boolean;
+  /**
+   * Pre-assembled context (selection window + outline). Built on the
+   * frontend while blocks live in AppState; backend appends to the prompt.
+   */
+  contextPack?: string;
 }
 
 /** What a provider can produce back to the app. */
@@ -249,9 +260,8 @@ export interface Highlight {
 export interface Document {
   id: ID;
   /** Owning workspace; undefined = legacy/unscoped. */
-  workspaceId?: ID;
-  /** "source" = read-only research document; "summary" = editable. */
   kind: "source" | "summary";
+  workspaceId?: ID;
   sourceId: ID;
   metadata: DocumentMetadata;
   blocks: DocumentBlock[];
