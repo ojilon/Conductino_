@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useRef } from "react";
-import { useApp, activeReaderDocument } from "./appState";
+import { useApp, activeReaderDocument, primarySummaryDocument, activeWorkspace } from "./appState";
 import { getAIProvider } from "../services/ai";
 import { uid } from "../utils/helpers";
 import type { AIActivity, AIOperation } from "../types/domain";
@@ -95,8 +95,6 @@ export function useAIRunners() {
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
           onBrowseSources: () => undefined,
           onDone: (result) => {
-            // No scaffolded placeholder: an empty explanation is shown
-            // verbatim as unavailable where the response was expected.
             const explanation = result.explanation?.trim() ? result.explanation : "AI unavailable now.";
             dispatch({
               type: "reader.ui",
@@ -113,8 +111,6 @@ export function useAIRunners() {
             finish(id, { status: "completed", message: `${operation.replace("AI_", "").toLowerCase()} completed` });
           },
           onError: (message) => {
-            // Put the failure where the response was supposed to go, so the
-            // panel never shows a stale answer or a blank space.
             dispatch({
               type: "reader.ui",
               patch: {
@@ -140,16 +136,23 @@ export function useAIRunners() {
 
   const runIncludeInSummary = useCallback(
     (selection: SelectionRef) => {
-      const summary = Object.values(state.documents).find((d) => d.kind === "summary");
+      // Phase 2: resolve via active workspace primarySummaryId — never
+      // Object.values(documents).find(kind===summary) (first-summary-wins).
+      const summary = primarySummaryDocument(state);
       if (!summary) {
-        dispatch({ type: "toast", message: "No summary document in this session" });
+        dispatch({
+          type: "toast",
+          message: "No summary mapped to this workspace — create a research summary first.",
+        });
         return;
       }
       const sourceDoc = state.documents[selection.documentId];
       const sourceId = sourceDoc?.sourceId ?? selection.documentId;
+      const wsId = activeWorkspace(state)?.id ?? sourceDoc?.workspaceId ?? summary.workspaceId;
       const id = start("AI_MERGE", {
         documentId: summary.id,
         sourceId,
+        workspaceId: wsId,
         selection: selection.text,
         message: "Extracting claim…",
       });
@@ -171,6 +174,7 @@ export function useAIRunners() {
               change: {
                 id: changeId,
                 documentId: summary.id,
+                workspaceId: wsId,
                 type: "insert",
                 blockId,
                 oldContent: "",
@@ -191,8 +195,6 @@ export function useAIRunners() {
             dispatch({ type: "selection.set", selection: null });
             dispatch({ type: "toast", message: "Change proposed in Research Summary — review it in the document" });
           },
-          // No fabricated insertion on failure: say so where the result
-          // was expected (toast) and leave the summary untouched.
           onError: (message) => {
             finish(id, { status: "error", error: message });
             dispatch({ type: "toast", message: "AI unavailable now — nothing was added to the summary." });
