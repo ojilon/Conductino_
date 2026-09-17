@@ -28,21 +28,33 @@ import { reduceWorkspace } from "./reduceWorkspace";
 
 export type { Action } from "./actions";
 
-/** Ensure mock seed has workspace (Phase 2) until data.ts is fully retagged. */
+const DEMO = "ws-demo";
+
+/** Ensure mock seed has workspace + tags (Phase 2) until data.ts is fully retagged. */
 function createInitialState(): AppState {
   const s = mockInitialState() as AppState;
   if (!s.workspace?.byId) {
     s.workspace = {
-      activeId: "ws-demo",
+      activeId: DEMO,
       byId: {
-        "ws-demo": {
-          id: "ws-demo",
+        [DEMO]: {
+          id: DEMO,
           rootPath: null,
           primarySummaryId: "doc-summ",
           label: "Demo research workspace",
         },
       },
     };
+  }
+  const wsId = s.workspace.activeId ?? DEMO;
+  for (const src of Object.values(s.sources)) {
+    if (!src.workspaceId) src.workspaceId = wsId;
+  }
+  for (const doc of Object.values(s.documents)) {
+    if (!doc.workspaceId) doc.workspaceId = wsId;
+  }
+  for (const ch of Object.values(s.changes)) {
+    if (!ch.workspaceId) ch.workspaceId = wsId;
   }
   return s;
 }
