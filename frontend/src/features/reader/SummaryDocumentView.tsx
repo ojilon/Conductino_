@@ -1,55 +1,49 @@
 /**
- * Summary document view — EDITABLE research summary.
+ * Summary document view — EDITABLE research summary via Slate.
  *
- * Status: BASIC WORKING IMPLEMENTATION.
- *  - Paragraphs and headings are real contentEditable blocks (plain text).
- *  - Pending AI changes render visually (inserted = amber card,
- *    modified = amber underline fragment) and become plain text on accept.
- *  - No rich formatting yet; a real editor (e.g. ProseMirror/TipTap or a
- *    Go-side editor) replaces EditableText + block rendering only.
- *
- * Deliberately NOT shared with SourceDocumentView: source documents are
- * read-only with range selection; summaries are block-editable. The
- * shared part is the DocumentModel itself.
+ * Phase 7: Slate is a transient view only. Canonical body remains
+ * DocumentBlock[]; toSlate / fromSlate are the sole conversion boundary.
+ * Pending AI inserts/modifies still render as cards/decorations until
+ * accept/reject merges them into blocks and re-hydrates the editor.
  */
 
-import { useRef, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
+import {
+  createEditor,
+  type Descendant,
+  type BaseEditor,
+  Editor,
+} from "slate";
+import {
+  Slate,
+  Editable,
+  withReact,
+  type RenderElementProps,
+  type RenderLeafProps,
+  type ReactEditor,
+} from "slate-react";
+import { withHistory, type HistoryEditor } from "slate-history";
 import { useApp, pendingChangesFor } from "../../state/appState";
-import type { Document, DocumentChange } from "../../types/domain";
+import type { Document, DocumentBlock, DocumentChange, ID } from "../../types/domain";
 import { Icon } from "../../components/icons";
 import { Badge } from "../../components/ui";
 import { cn } from "../../utils/cn";
+import {
+  toSlate,
+  fromSlate,
+  sameBlocks,
+  type SlateElement as ConductinoSlateElement,
+  type SlateText as ConductinoSlateText,
+} from "./slateAdapter";
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+declare module "slate" {
+  interface CustomTypes {
+    Editor: BaseEditor & ReactEditor & HistoryEditor;
+    Element: ConductinoSlateElement;
+    Text: ConductinoSlateText;
+  }
 }
 
-/* Uncontrolled editable block. React never rewrites its text node while
-   the user types; external updates (accept/reject) remount via key. */
-function EditableText({
-  initialText,
-  onText,
-  className,
-}: {
-  initialText: string;
-  onText: (text: string) => void;
-  className?: string;
-}) {
-  const init = useRef<string | null>(null);
-  if (init.current === null) init.current = escapeHtml(initialText);
-  return (
-    <div
-      contentEditable
-      suppressContentEditableWarning
-      spellCheck={false}
-      onInput={(e) => onText((e.currentTarget as HTMLElement).innerText)}
-      className={cn("cursor-text rounded-[4px] px-0.5 transition-shadow", className)}
-      dangerouslySetInnerHTML={{ __html: init.current }}
-    />
-  );
-}
-
-/* "Modified" pending state: original sentence + new fragment underlined. */
 function ModifiedText({ full, fragment }: { full: string; fragment?: string }) {
   let body: ReactNode = full;
   if (fragment && full.includes(fragment)) {
@@ -83,86 +77,197 @@ function InsertCard({ change, sourceTitle }: { change: DocumentChange; sourceTit
   );
 }
 
+function Element({ attributes, children, element }: RenderElementProps) {
+  const el = element as ConductinoSlateElement;
+  const pending = Boolean(el.changeId);
+
+  if (el.type === "heading") {
+    const level = el.level ?? 2;
+    if (level === 1) {
+      return (
+        <h1
+          {...attributes}
+          className={cn(
+            "mb-7 font-serif text-[26px] font-bold leading-tight text-ink-900",
+            pending && "rounded-md border border-hay-200 bg-hay-50/60 px-2",
+          )}
+          data-block-id={el.blockId}
+        >
+          {children}
+        </h1>
+      );
+    }
+    return (
+      <h2
+        {...attributes}
+        className={cn(
+          "mt-8 font-serif text-[19px] font-bold text-ink-900",
+          pending && "rounded-md border border-hay-200 bg-hay-50/60 px-2",
+        )}
+        data-block-id={el.blockId}
+      >
+        {children}
+      </h2>
+    );
+  }
+
+  if (el.type === "list") {
+    return (
+      <ul
+        {...attributes}
+        className={cn("my-4 list-disc pl-6 doc-body", pending && "rounded-md border border-hay-200 bg-hay-50/60")}
+        data-block-id={el.blockId}
+      >
+        {children}
+      </ul>
+    );
+  }
+
+  return (
+    <p
+      {...attributes}
+      className={cn(
+        "my-4 doc-body",
+        pending && "rounded-md border border-hay-200 bg-hay-50/40 px-2 py-1",
+      )}
+      data-block-id={el.blockId}
+    >
+      {children}
+    </p>
+  );
+}
+
+function Leaf({ attributes, children, leaf }: RenderLeafProps) {
+  const l = leaf as ConductinoSlateText;
+  let node: ReactNode = children;
+  if (l.strong) node = <strong>{node}</strong>;
+  if (l.em) node = <em>{node}</em>;
+  if (l.highlightId) {
+    node = (
+      <mark className="rounded-[2px] bg-sky-100/80 px-0.5 text-ink-900" data-highlight-id={l.highlightId}>
+        {node}
+      </mark>
+    );
+  }
+  return <span {...attributes}>{node}</span>;
+}
+
+function SummarySlateEditor({
+  docId,
+  blocks,
+  externalKey,
+}: {
+  docId: ID;
+  blocks: DocumentBlock[];
+  externalKey: string;
+}) {
+  const { dispatch } = useApp();
+  const editor = useMemo(() => withHistory(withReact(createEditor())), [externalKey]);
+  const initial = useMemo(() => toSlate(blocks), [externalKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onChange = useCallback(
+    (next: Descendant[]) => {
+      const nextBlocks = fromSlate(next);
+      if (sameBlocks(nextBlocks, blocks)) return;
+
+      dispatch({ type: "doc.blocks.replace", documentId: docId, blocks: nextBlocks });
+
+      const first = nextBlocks[0];
+      if (first?.type === "heading" && first.level === 1) {
+        const title = first.segments.map((s) => s.text).join("").trim();
+        if (title) dispatch({ type: "doc.title", documentId: docId, text: title });
+      }
+    },
+    [blocks, dispatch, docId],
+  );
+
+  const renderElement = useCallback((props: RenderElementProps) => <Element {...props} />, []);
+  const renderLeaf = useCallback((props: RenderLeafProps) => <Leaf {...props} />, []);
+
+  return (
+    <Slate key={externalKey} editor={editor} initialValue={initial} onChange={onChange}>
+      <Editable
+        renderElement={renderElement}
+        renderLeaf={renderLeaf}
+        spellCheck={false}
+        className="outline-none min-h-[12rem]"
+        placeholder="Start writing the summary…"
+        onKeyDown={(event) => {
+          if (!event.metaKey && !event.ctrlKey) return;
+          if (event.key === "b") {
+            event.preventDefault();
+            const marks = Editor.marks(editor) as ConductinoSlateText | null;
+            if (marks?.strong) Editor.removeMark(editor, "strong");
+            else Editor.addMark(editor, "strong", true);
+          }
+          if (event.key === "i") {
+            event.preventDefault();
+            const marks = Editor.marks(editor) as ConductinoSlateText | null;
+            if (marks?.em) Editor.removeMark(editor, "em");
+            else Editor.addMark(editor, "em", true);
+          }
+        }}
+      />
+    </Slate>
+  );
+}
+
 export default function SummaryDocumentView({ doc }: { doc: Document }) {
-  const { state, dispatch } = useApp();
+  const { state } = useApp();
   const pending = pendingChangesFor(state, doc.id);
   const changeByBlock = new Map(pending.map((c) => [c.blockId, c]));
 
-  const setText = (blockId: string, text: string) =>
-    dispatch({ type: "doc.block.text", documentId: doc.id, blockId, text });
+  const pendingInserts = pending.filter((c) => c.type === "insert");
+  const pendingModifies = new Map(
+    pending.filter((c) => c.type === "modify").map((c) => [c.blockId, c] as const),
+  );
+
+  const editableBlocks = doc.blocks.filter((b) => {
+    const ch = changeByBlock.get(b.id);
+    return !(ch && ch.type === "insert" && ch.status === "pending");
+  });
 
   return (
     <div className="mx-auto max-w-[700px] px-8 py-6">
       <div className="mb-4 flex items-center justify-between border-b border-line pb-2.5 text-[12px] text-mute">
-        <span>Editable summary · contributes {doc.sourceIds?.length ?? 0} sources</span>
+        <span>Editable summary · Slate · {doc.sourceIds?.length ?? 0} sources</span>
         <span className="flex items-center gap-1.5">
           <span className={cn("h-1.5 w-1.5 rounded-full", pending.length ? "bg-hay-300" : "bg-moss-200")} />
-          {pending.length ? `${pending.length} pending change${pending.length === 1 ? "" : "s"}` : "all changes reviewed"}
+          {pending.length
+            ? `${pending.length} pending change${pending.length === 1 ? "" : "s"}`
+            : "all changes reviewed"}
         </span>
       </div>
 
-      {doc.blocks.map((block, i) => {
-        const change = changeByBlock.get(block.id);
+      {Array.from(pendingModifies.values()).map((change) => (
+        <div key={`mod-${change.id}`} className="mb-2">
+          <div className="mb-1 flex items-center gap-2 text-[11px] text-hay-600">
+            <Icon name="sparkles" size={12} />
+            <span className="font-semibold uppercase tracking-wide">Proposed revision</span>
+            <Badge tone="hay">pending</Badge>
+          </div>
+          <ModifiedText full={change.newContent} fragment={change.highlightFragment} />
+        </div>
+      ))}
 
-        /* title */
-        if (i === 0 && block.type === "heading" && block.level === 1) {
-          return (
-            <h1
-              key={block.id}
-              className="mb-7 font-serif text-[26px] font-bold leading-tight text-ink-900"
-            >
-              <EditableText
-                initialText={block.segments.map((s) => s.text).join("")}
-                onText={(t) => dispatch({ type: "doc.title", documentId: doc.id, text: t })}
-                className="block"
-              />
-            </h1>
-          );
-        }
+      {pendingInserts.map((change) => (
+        <InsertCard
+          key={change.id}
+          change={change}
+          sourceTitle={state.sources[change.sourceId ?? ""]?.title ?? "session source"}
+        />
+      ))}
 
-        /* headings */
-        if (block.type === "heading") {
-          return (
-            <h2 key={block.id} className="mt-8 font-serif text-[19px] font-bold text-ink-900">
-              <EditableText
-                initialText={block.segments.map((s) => s.text).join("")}
-                onText={(t) => setText(block.id, t)}
-                className="block"
-              />
-            </h2>
-          );
-        }
+      <SummarySlateEditor
+        docId={doc.id}
+        blocks={editableBlocks}
+        externalKey={`${doc.id}:${pending.map((c) => c.id + c.status).join(",")}:${editableBlocks.length}`}
+      />
 
-        /* paragraphs */
-        const text = block.segments.map((s) => s.text).join("");
-        if (change && change.type === "insert" && change.status === "pending") {
-          return (
-            <InsertCard
-              key={`${block.id}:${change.status}`}
-              change={change}
-              sourceTitle={state.sources[change.sourceId]?.title ?? "session source"}
-            />
-          );
-        }
-        if (change && change.type === "modify" && change.status === "pending") {
-          return (
-            <div key={`${block.id}:${change.status}`}>
-              <ModifiedText full={change.newContent} fragment={change.highlightFragment} />
-            </div>
-          );
-        }
-        return (
-          <p key={`${block.id}:${change?.status ?? "none"}`} className="my-4 doc-body">
-            <EditableText initialText={text} onText={(t) => setText(block.id, t)} className="block" />
-          </p>
-        );
-      })}
-
-      {/* accepted changes remain as plain text; show a quiet provenance line */}
       {pending.length === 0 && (
         <p className="mt-8 flex items-center gap-2 border-t border-line-soft pt-4 text-[11.5px] text-mute">
           <Icon name="shieldCheck" size={13} className="text-moss-600" />
-          AI edits appear here as highlighted proposals until you accept or reject them.
+          AI edits appear here as highlighted proposals until you accept or reject them. Cmd/Ctrl+B bold, Cmd/Ctrl+I italic.
         </p>
       )}
     </div>
