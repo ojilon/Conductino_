@@ -52,7 +52,7 @@ func selectionText(req models.AIRequest) string {
 	return sel
 }
 
-// withContext appends custom prompt + document context pack when present.
+// withContext appends custom prompt + document context pack + summary snapshot.
 func withContext(base string, req models.AIRequest) string {
 	var b strings.Builder
 	b.WriteString(base)
@@ -63,6 +63,13 @@ func withContext(base string, req models.AIRequest) string {
 	if pack := strings.TrimSpace(req.ContextPack); pack != "" {
 		b.WriteString("\n\n### Document context\n")
 		b.WriteString(pack)
+	}
+	if sum := strings.TrimSpace(req.SummaryContent); sum != "" {
+		if len(sum) > 6000 {
+			sum = sum[:6000] + "\n…[summary truncated]"
+		}
+		b.WriteString("\n\n### Current research summary (target document)\n")
+		b.WriteString(sum)
 	}
 	return b.String()
 }
@@ -119,7 +126,7 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 		base := "Summarize the following text in 3-5 sentences for a research summary. Always finish your final sentence:\n\n" + text
 		return withContext(base, req), kindExplanation, tokenBudgetExplanation
 	case models.OpMerge:
-		base := "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Always finish your final sentence:\n\n" + sel
+		base := "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Prefer not to repeat claims already present in the current research summary when that context is provided. Always finish your final sentence:\n\n" + sel
 		return withContext(base, req), kindInsertion, tokenBudgetExplanation
 	case models.OpRewrite:
 		draft := query
