@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { useApp, activeReaderDocument } from "../../state/appState";
+import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
 import { backend, type OpenedFile } from "../../services/backend";
 import { EmptyState, ResizablePanel } from "../../components/ui";
 import { Icon } from "../../components/icons";
@@ -42,16 +42,9 @@ export default function ReaderMode() {
   const doc = activeReaderDocument(state);
   const session = state.reader.session;
 
-  // Single owner of the library tree: undefined = loading, null = no
-  // folder yet (empty state), FileTreeNode = live tree (mock data in browser
-  // mode, real Workspace-owned tree in the desktop app).
   const [tree, setTree] = useState<FileTreeNode | null | undefined>(undefined);
   const [treeError, setTreeError] = useState<string | null>(null);
-  // Path token the Library panel should expand + highlight (set by "Show in
-  // library" in the Documents panel, cleared once consumed there).
   const [locatePath, setLocatePath] = useState<string | null>(null);
-  // Absolute workspace root tagging the current folder (tasks.md 1.1 option b).
-  // Null = unknown (mock mode / bridge unavailable) — stale checks are skipped.
   const [currentRoot, setCurrentRoot] = useState<string | null>(null);
 
   const refreshTree = useCallback(async () => {
@@ -78,9 +71,6 @@ export default function ReaderMode() {
     };
   }, []);
 
-  // Folder dialog → backend repoints the library itself (App.SelectFolder) →
-  // re-read. Null = cancelled: keep the current tree, no toast. In browser
-  // mock mode there is no dialog at all — say so instead of staying silent.
   const pickFolder = useCallback(async () => {
     const picked = await backend.filesystem.selectFolder().catch(() => null);
     if (picked == null) {
@@ -90,18 +80,25 @@ export default function ReaderMode() {
       return;
     }
     await refreshTree();
-    // The dialog already repointed the Go root; the returned absolute path is
-    // the new current root. Refresh from the bridge as well in case the shell
-    // normalized it — open tabs keep their old rootPath tags (1.1 option b).
     const root = await backend.filesystem.libraryRoot().catch(() => null);
-    setCurrentRoot(root ?? picked);
+    const abs = root ?? picked;
+    setCurrentRoot(abs);
+    // Phase 2: each library root is its own workspace session so summaries
+    // never cross folders.
+    const wsId = workspaceIdFromRoot(abs);
+    dispatch({
+      type: "workspace.ensure",
+      session: {
+        id: wsId,
+        rootPath: abs,
+        primarySummaryId: null,
+        label: abs.split(/[/\\]/).filter(Boolean).pop() ?? abs,
+      },
+    });
+    dispatch({ type: "workspace.setActive", id: wsId });
     dispatch({ type: "toast", message: `Library: ${picked}` });
   }, [refreshTree, dispatch]);
 
-  // Documents panel → Library panel handoff: switch rail views and ask the
-  // tree to reveal this file's location. Stale guard (tasks.md 1.1 option b):
-  // a tab tagged with another folder's root never resolves against the
-  // current tree — explicit message instead of a silent mis-locate.
   const showInLibrary = useCallback(
     (path: string, rootPath?: string) => {
       if (isStaleRoot(rootPath, currentRoot)) {
@@ -114,7 +111,6 @@ export default function ReaderMode() {
     [dispatch, currentRoot],
   );
 
-  /** Open a workspace file as a reader document. */
   const openFile = async (node: FileTreeNode & { path: string }) => {
     if (node.documentId) {
       const existingTab = session.tabIds.find((t) => state.reader.tabs[t]?.documentId === node.documentId);
@@ -132,11 +128,6 @@ export default function ReaderMode() {
       });
       return;
     }
-    // File without a loaded document → real extraction pipe only
-    // (App.OpenFile: extension-dispatched extraction, .txt/.md today).
-    // No mock fallback (tasks.md 1.2): every failure — unsupported type,
-    // missing file, access denied, too large, unreadable — shows an honest
-    // error naming the file and reason, and opens nothing.
     const ext = (node.ext ?? "pdf").toLowerCase();
     let opened: OpenedFile | null;
     try {
@@ -167,11 +158,13 @@ export default function ReaderMode() {
     const firstText = blocks
       .map((b) => b.segments.map((s) => s.text).join(""))
       .find((t) => t.trim()) ?? "";
+    const workspaceId = state.workspace.activeId ?? undefined;
     const source: Source = {
       id: sourceId,
+      workspaceId,
       kind: "text",
       title: opened.title || labelForPath(node.label),
-      origin: node.path, // root-relative token, not a built path
+      origin: node.path,
       typeLabel: `${ext.toUpperCase()} document`,
       abstract: firstText.slice(0, 280),
       saved: false,
@@ -183,6 +176,7 @@ export default function ReaderMode() {
       type: "doc.add",
       document: {
         id: docId,
+        workspaceId,
         kind: "source",
         sourceId,
         metadata: {
@@ -190,8 +184,6 @@ export default function ReaderMode() {
           format: "text",
           pageCount: opened.pageCount ?? 1,
           path: node.path,
-          // Tag with the opening folder (1.1 option b): Go's absolute root
-          // wins (race-free); fall back to the UI-known current root.
           rootPath: opened.root ?? currentRoot ?? undefined,
         },
         blocks,
