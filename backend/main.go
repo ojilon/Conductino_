@@ -66,11 +66,12 @@ type Backend struct {
 // Called once by the Wails shell (frontend/app.go: NewApp).
 func NewBackend() *Backend {
 	fs := services.NewFilesystem("research_workspace")
+	docs := services.NewDocuments()
 	return &Backend{
 		fs:      fs,
 		storage: services.NewStorage(),
-		docs:    services.NewDocuments(),
-		ai:      services.NewAI(),
+		docs:    docs,
+		ai:      services.NewAI(fs, docs), // Phase 5: tools share Resolve + OpenFile
 		work:    services.NewWorkspace(fs),
 	}
 }
