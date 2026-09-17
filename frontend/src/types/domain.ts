@@ -68,6 +68,8 @@ export type Relevance = "highest" | "high" | "good";
  */
 export interface Source {
   id: ID;
+  /** Owning workspace; undefined = legacy/unscoped (mock until tagged). */
+  workspaceId?: ID;
   kind: SourceKind;
   title: string;
   /** Host (web) or file path (local). */
@@ -81,6 +83,25 @@ export interface Source {
   inReader: boolean;
   /** Set once the source has been opened as a reader document. */
   documentId?: ID;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Workspace (folder-scoped session)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One open research folder. Maps sources/summaries so "include in summary"
+ * never picks an arbitrary first summary (tasks.md §2 / Phase 2).
+ * rootPath is absolute on desktop; null for the seeded mock workspace.
+ */
+export interface WorkspaceSession {
+  id: ID;
+  /** Absolute library root when known (desktop). */
+  rootPath: string | null;
+  /** Summary document that receives AI merges for this workspace. */
+  primarySummaryId: ID | null;
+  label?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -116,6 +137,7 @@ export interface AIActivity {
   id: ID;
   operation: AIOperation;
   status: AIStatus;
+  workspaceId?: ID;
   /** Human-readable progress message ("Comparing sources…"). */
   message: string;
   documentId?: ID;
@@ -226,6 +248,8 @@ export interface Highlight {
 
 export interface Document {
   id: ID;
+  /** Owning workspace; undefined = legacy/unscoped. */
+  workspaceId?: ID;
   /** "source" = read-only research document; "summary" = editable. */
   kind: "source" | "summary";
   sourceId: ID;
@@ -256,6 +280,8 @@ export type ChangeStatus = "pending" | "accepted" | "rejected";
 export interface DocumentChange {
   id: ID;
   documentId: ID;
+  /** Owning workspace (same as target document when set). */
+  workspaceId?: ID;
   type: ChangeType;
   blockId: ID;
   oldContent: string;
@@ -338,6 +364,14 @@ export interface AppState {
   mode: AppMode;
   browser: BrowserState;
   reader: ReaderState;
+  /**
+   * Folder-scoped sessions. activeId is the library currently open;
+   * primarySummaryId on that session is the merge target.
+   */
+  workspace: {
+    activeId: ID | null;
+    byId: Record<ID, WorkspaceSession>;
+  };
   sources: Record<ID, Source>;
   documents: Record<ID, Document>;
   changes: Record<ID, DocumentChange>;
