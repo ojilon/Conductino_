@@ -68,3 +68,36 @@ export function workspaceIdFromRoot(rootPath: string): ID {
   for (let i = 0; i < rootPath.length; i++) h = (Math.imul(31, h) + rootPath.charCodeAt(i)) | 0;
   return `ws-${(h >>> 0).toString(16)}`;
 }
+
+/** Folder directory of a document path (POSIX or Windows). */
+function parentDir(path: string | undefined | null): string | null {
+  if (!path) return null;
+  const norm = path.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  if (i <= 0) return null;
+  return norm.slice(0, i);
+}
+
+/**
+ * Summaries that can receive "include in summary" for a source document.
+ * Prefer summaries in the same folder as the source; fall back to all
+ * summaries in the same workspace. Used when primary is unset or ambiguous.
+ */
+export function summariesNearDocument(state: AppState, sourceDocId: ID): Document[] {
+  const source = state.documents[sourceDocId];
+  if (!source) return [];
+  const wsId = source.workspaceId ?? activeWorkspace(state)?.id;
+  const all = Object.values(state.documents).filter((d) => d.kind === "summary");
+  const scoped = wsId ? all.filter((d) => d.workspaceId === wsId) : all;
+  const pool = scoped.length ? scoped : all;
+  if (pool.length <= 1) return pool;
+
+  const srcDir = parentDir(source.metadata?.path);
+  if (!srcDir) return pool;
+
+  const sameFolder = pool.filter((d) => {
+    const dDir = parentDir(d.metadata?.path);
+    return dDir !== null && dDir === srcDir;
+  });
+  return sameFolder.length ? sameFolder : pool;
+}
