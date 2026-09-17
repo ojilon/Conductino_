@@ -91,7 +91,14 @@ const (
 	OpMerge     AIOperation = "AI_MERGE"
 	OpRewrite   AIOperation = "AI_REWRITE"
 	OpVerify    AIOperation = "AI_VERIFY"
+	OpChat      AIOperation = "AI_CHAT"
 )
+
+// ChatTurn is one prior message in a multi-turn chat request.
+type ChatTurn struct {
+	Role    string `json:"role"` // user | assistant | system
+	Content string `json:"content"`
+}
 
 // AIRequest is the wire shape of an AI operation (mirrors TS AIRequest in
 // frontend/src/types/domain.ts, translated by the WailsAIProvider in
@@ -115,6 +122,9 @@ type AIRequest struct {
 	// by the frontend while document blocks live in AppState. The AI
 	// service appends it to the model prompt.
 	ContextPack string `json:"contextPack,omitempty"`
+	// Phase 4 multi-turn history (prior turns; current query is Query/Selection).
+	MessageHistory []ChatTurn `json:"messageHistory,omitempty"`
+	Mode           string     `json:"mode,omitempty"` // "oneshot" | "chat"
 	// RequestID correlates events back to the originating call: every AIEvent
 	// the backend emits for this request echoes it, so concurrent requests
 	// never cross-talk on the shared "ai://event" channel.
