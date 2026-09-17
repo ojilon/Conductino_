@@ -12,23 +12,21 @@ Each phase should leave the app shippable (no broken reader).
 - [x] WorkspaceSession, primarySummaryDocument, folder bind, no first-summary-wins
 
 ## Phase 3 — Context pack for oneshot AI
-**Goal:** explanations use more than the highlight.
-
-- [x] Frontend `contextPack.ts`: selection + local window + outline (budgeted).
-- [x] Backend `context.go` + prompt `withContext` (custom prompt + pack).
-- [x] Extend `AIRequest` (TS + Go): workspaceId, customPrompt, contextPack, includeDocumentContext.
-- [x] Selection toolbar: Ask AI opens optional instruction textarea; Explain / Go deeper pass prompt + pack.
-- [x] Go unit tests for prompt assembly / truncate.
-
-**Exit:** “Go deeper” quality improves; custom prompt reaches the model.
-
-**Note:** Context is assembled on the frontend while document blocks live in
-AppState; backend appends the pack to the prompt. Phase 6 may move assembly to Go.
+- [x] contextPack, custom prompt, AIRequest fields, selection toolbar
 
 ## Phase 4 — Chat UI + thread persistence (still no tools)
-- Message model + backend store
-- Right panel: Chat | Review tabs
-- Multi-turn `AI_CHAT` without tools first
+**Goal:** chatbot-style panel.
+
+- [x] `ChatMessage` / `ChatThread` domain + `AppState.chat`
+- [x] Actions: `chat.ensure` / `setActive` / `append` / `clear` + `reduceChat`
+- [x] `AI_CHAT` operation (Go + TS) with `messageHistory` in prompt
+- [x] Right panel tabs: **Chat** | Reading/Review
+- [x] Composer + multi-turn thread (workspace-scoped)
+- [ ] SQLite / workspace sidecar persistence (deferred to Phase 6)
+
+**Exit:** continued conversation on the same document/workspace.
+
+**Note:** Threads live in AppState for now. Phase 6 stores chat in SQLite.
 
 ## Phase 5 — Harness tools (folder-scoped)
 - Tool registry + Resolve guards
