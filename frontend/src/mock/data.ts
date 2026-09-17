@@ -127,6 +127,7 @@ export function createInitialState(): AppState {
         railView: "documents",
         aiPanelOpen: true,
         aiPanelWidth: 330,
+        aiPanelTab: "chat",
         companion: null,
       },
     },
