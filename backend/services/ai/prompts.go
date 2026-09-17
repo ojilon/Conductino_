@@ -38,47 +38,68 @@ const (
 	kindRevision    promptKind = "revision"
 )
 
-// tokenBudgetExplanation/tokenBudgetShort size the per-call output ceiling.
-// Explanations and insertions need headroom for a full paragraph; revisions
-// restate the input and stay small. Thinking is disabled (see
-// geminiGenerationConfig), so the whole budget is visible text — these
-// ceilings are generous, not tight.
 const (
 	tokenBudgetExplanation = 2048
 	tokenBudgetShort       = 1024
 )
+
+func selectionText(req models.AIRequest) string {
+	sel := strings.TrimSpace(req.SelectionText)
+	if sel == "" {
+		sel = strings.TrimSpace(req.Selection)
+	}
+	return sel
+}
+
+// withContext appends custom prompt + document context pack when present.
+func withContext(base string, req models.AIRequest) string {
+	var b strings.Builder
+	b.WriteString(base)
+	if cp := strings.TrimSpace(req.CustomPrompt); cp != "" {
+		b.WriteString("\n\n### User instruction\n")
+		b.WriteString(cp)
+	}
+	if pack := strings.TrimSpace(req.ContextPack); pack != "" {
+		b.WriteString("\n\n### Document context\n")
+		b.WriteString(pack)
+	}
+	return b.String()
+}
 
 // buildPrompt translates an AI operation into a model prompt, the result kind
 // its answer belongs to, and its token ceiling. It returns "" for operations
 // this service does not serve (AI_SEARCH is rejected earlier with its own
 // honest message).
 func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKind, int) {
-	sel := strings.TrimSpace(req.SelectionText)
-	if sel == "" {
-		sel = strings.TrimSpace(req.Selection)
-	}
+	sel := selectionText(req)
 	query := strings.TrimSpace(req.Query)
 	switch op {
 	case models.OpExplain:
-		return "Explain the following passage from a research document concisely, in 2-4 sentences, for a researcher. Always finish your final sentence:\n\n" + sel, kindExplanation, tokenBudgetExplanation
+		base := "Explain the following passage from a research document concisely, in 2-4 sentences, for a researcher. Use the document context when it clarifies the passage. Always finish your final sentence:\n\n" + sel
+		return withContext(base, req), kindExplanation, tokenBudgetExplanation
 	case models.OpVerify:
-		return "Assess the following claim from a research document in 2-4 sentences: is it well-supported on its face, and what caveat (if any) should a researcher keep in mind? Always finish your final sentence. Claim:\n\n" + sel, kindExplanation, tokenBudgetExplanation
+		base := "Assess the following claim from a research document in 2-4 sentences: is it well-supported on its face, and what caveat (if any) should a researcher keep in mind? Use surrounding context when provided. Always finish your final sentence. Claim:\n\n" + sel
+		return withContext(base, req), kindExplanation, tokenBudgetExplanation
 	case models.OpExpand:
-		return "Go deeper on the following passage from a research document: unpack the mechanism, add relevant quantitative or contextual detail, in one short paragraph. Always finish your final sentence:\n\n" + sel, kindExplanation, tokenBudgetExplanation
+		base := "Go deeper on the following passage from a research document: unpack the mechanism, add relevant quantitative or contextual detail, in one short paragraph. Prefer details supported by the document context. Always finish your final sentence:\n\n" + sel
+		return withContext(base, req), kindExplanation, tokenBudgetExplanation
 	case models.OpSummarize:
 		text := sel
 		if text == "" {
 			text = query
 		}
-		return "Summarize the following text in 3-5 sentences for a research summary. Always finish your final sentence:\n\n" + text, kindExplanation, tokenBudgetExplanation
+		base := "Summarize the following text in 3-5 sentences for a research summary. Always finish your final sentence:\n\n" + text
+		return withContext(base, req), kindExplanation, tokenBudgetExplanation
 	case models.OpMerge:
-		return "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Always finish your final sentence:\n\n" + sel, kindInsertion, tokenBudgetExplanation
+		base := "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Always finish your final sentence:\n\n" + sel
+		return withContext(base, req), kindInsertion, tokenBudgetExplanation
 	case models.OpRewrite:
 		draft := query
 		if draft == "" {
 			draft = sel
 		}
-		return "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft, kindRevision, tokenBudgetShort
+		base := "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft
+		return withContext(base, req), kindRevision, tokenBudgetShort
 	default:
 		return "", "", 0
 	}
@@ -97,10 +118,9 @@ func encodeResult(kind promptKind, text string) string {
 	default:
 		res.Explanation = strings.TrimSpace(text)
 	}
-	wire, err := json.Marshal(res)
+	b, err := json.Marshal(res)
 	if err != nil {
-		fallback, _ := json.Marshal(aiResult{Explanation: text})
-		return string(fallback)
+		return `{"explanation":""}`
 	}
-	return string(wire)
+	return string(b)
 }
