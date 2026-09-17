@@ -47,6 +47,9 @@ interface GoAIRequest {
   /** Phase 4 multi-turn. */
   messageHistory?: ChatTurn[];
   mode?: string;
+  /** Phase 5 tools. */
+  summaryContent?: string;
+  primarySummaryId?: string;
 }
 
 interface GoAIEvent {
@@ -119,7 +122,7 @@ function parseResult(payload?: string): AIResult {
   }
 }
 
-const CALL_TIMEOUT_MS = 90_000;
+const CALL_TIMEOUT_MS = 120_000; // tools may need a second model round
 
 /* ------------------------------------------------------------------ */
 /* WailsAIProvider                                                     */
@@ -170,6 +173,8 @@ class WailsAIProvider implements AIProvider {
         contextPack: request.contextPack,
         messageHistory: request.messageHistory,
         mode: request.mode,
+        summaryContent: request.summaryContent,
+        primarySummaryId: request.primarySummaryId,
         requestId,
       })
       .catch((e: unknown) =>
