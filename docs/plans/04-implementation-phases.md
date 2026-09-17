@@ -15,32 +15,26 @@ Each phase should leave the app shippable (no broken reader).
 - [x] contextPack, custom prompt, AIRequest fields, selection toolbar
 
 ## Phase 4 — Chat UI + thread persistence (still no tools)
-**Goal:** chatbot-style panel.
-
-- [x] `ChatMessage` / `ChatThread` domain + `AppState.chat`
-- [x] Actions: `chat.ensure` / `setActive` / `append` / `clear` + `reduceChat`
-- [x] `AI_CHAT` operation (Go + TS) with `messageHistory` in prompt
-- [x] Right panel tabs: **Chat** | Reading/Review
+- [x] ChatMessage / ChatThread domain + AppState.chat
+- [x] Actions + reduceChat
+- [x] AI_CHAT with messageHistory
+- [x] Right panel tabs: Chat | Reading/Review
 - [x] Composer + multi-turn thread (workspace-scoped)
-- [ ] SQLite / workspace sidecar persistence (deferred to Phase 6)
-
-**Exit:** continued conversation on the same document/workspace.
-
-**Note:** Threads live in AppState for now. Phase 6 stores chat in SQLite.
+- [x] SQLite chat tables (Phase 6)
 
 ## Phase 5 — Harness tools (folder-scoped)
-**Goal:** AI_CHAT can list/read workspace files and propose summary edits under Resolve guards.
-
-- [x] Tool registry + parse (`tools.go`) — list_workspace, read_source, read_summary, propose_summary_edit
-- [x] Resolve + extension guards; no shell; size caps
-- [x] Chat tool loop max 2 rounds (`chat.go`); phase labels for tools
-- [x] Wire `NewAI(fs, docs)` from Backend
-- [x] Frontend: summary snapshot on chat request; insertion → DocumentChange
-- [x] Unit tests for parse + path rejection
-
-**Exit:** chat can list tree / read .txt|.md under the open folder; summary proposals still require user accept.
+- [x] Tool registry + Resolve guards
+- [x] list_workspace, read_source, read_summary, propose_summary_edit
+- [x] Chat tool loop; insertion → DocumentChange
 
 ## Phase 6 — Storage: SQLite as system of record
+- [x] Expand StorageService (workspaces, documents, changes, chat, settings)
+- [x] SQLiteStorage via modernc.org/sqlite (pure-Go) + memory fallback
+- [x] App-data DB path; CONDUCTINO_DB override
+- [x] Shared storage; restore last library root on Init
+- [x] Bridge + Wails: Save/Load document, change, chat; SetPrimarySummary
+- [x] RunAI fills SummaryContent from SQLite primary summary when omitted
+- [x] Unit tests (memory + sqlite)
 
 ## Phase 7 — Slate adapter for summary
 
