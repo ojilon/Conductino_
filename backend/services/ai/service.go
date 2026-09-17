@@ -60,6 +60,7 @@ type GeminiService struct {
 	// Multi-provider (05-multi-provider-apis.md): optional secondary backends.
 	secondary []ModelBackend
 	mode      string // single | failover | dual | auto
+	primary   string // gemini | groq | openrouter (AI_PRIMARY)
 }
 
 // New builds the backend AI service, loading the key once at startup.
@@ -67,10 +68,11 @@ type GeminiService struct {
 // error event telling the user exactly where to put the key.
 func New() *GeminiService {
 	g := &GeminiService{
-		apiKey: resolveAPIKey(),
-		model:  defaultGeminiModel,
-		client: &http.Client{Timeout: 90 * time.Second},
-		mode:   loadAIMode(),
+		apiKey:  resolveAPIKey(),
+		model:   defaultGeminiModel,
+		client:  &http.Client{Timeout: 90 * time.Second},
+		mode:    loadAIMode(),
+		primary: loadAIPrimary(),
 	}
 	g.secondary = loadSecondaryBackends()
 	return g
@@ -109,7 +111,11 @@ func (g *GeminiService) ProviderName() string {
 	if len(names) == 0 {
 		return "AI (no key)"
 	}
-	return strings.Join(names, " + ") + " · mode=" + g.mode
+	label := strings.Join(names, " + ") + " · mode=" + g.mode
+	if g.primary != "" {
+		label += " · primary=" + g.primary
+	}
+	return label
 }
 
 // Name implements ModelBackend for the primary Gemini endpoint.
@@ -136,8 +142,15 @@ func (g *GeminiService) Generate(ctx context.Context, prompt string, maxTokens i
 	return g.generate(ctx, prompt, maxTokens)
 }
 
-// generateWithFailover tries primary then secondaries on rate-limit / outage.
+// generateWithFailover tries the preferred backend, then others on failure.
 // emitPhase may be nil.
+//
+// Selection rules (05-multi-provider-apis.md):
+//   AI_PRIMARY=groq|openrouter → that secondary first (skip Gemini until it fails).
+//   AI_PRIMARY=gemini or empty → Gemini first when keyed.
+//   AI_MODE=auto with a secondary key → treat as failover.
+//   In failover/auto: ANY primary error tries the next backend (not only 429),
+//   so a dead Gemini free tier does not block Groq.
 func (g *GeminiService) generateWithFailover(
 	ctx context.Context,
 	prompt string,
@@ -155,43 +168,122 @@ func (g *GeminiService) generateWithFailover(
 		}
 	}
 
+	preferSecondary := g.primary == "groq" || g.primary == "openrouter"
+
 	var firstErr error
-	if g.ConfiguredPrimary() {
-		text, err := g.generate(ctx, prompt, maxTokens)
+	tryGemini := func() (string, error) {
+		if !g.ConfiguredPrimary() {
+			return "", fmt.Errorf("gemini key missing")
+		}
+		if emitPhase != nil {
+			emitPhase("Using gemini…")
+		}
+		return g.generate(ctx, prompt, maxTokens)
+	}
+	trySecondary := func(onlyName string) (string, error) {
+		var localFirst error
+		for _, b := range g.secondary {
+			if !b.Configured() {
+				continue
+			}
+			if onlyName != "" && b.Name() != onlyName {
+				continue
+			}
+			if emitPhase != nil {
+				emitPhase("Using " + b.Name() + "…")
+			}
+			text, err := b.Generate(ctx, prompt, maxTokens)
+			if err == nil {
+				return text, nil
+			}
+			if localFirst == nil {
+				localFirst = err
+			} else {
+				localFirst = fmt.Errorf("%v; %s: %v", localFirst, b.Name(), err)
+			}
+		}
+		if localFirst != nil {
+			return "", localFirst
+		}
+		return "", fmt.Errorf("no secondary backend configured")
+	}
+
+	// Preferred secondary first when AI_PRIMARY says so.
+	if preferSecondary {
+		text, err := trySecondary(g.primary)
 		if err == nil {
 			return text, nil
 		}
 		firstErr = err
-		if mode == "single" || !isRateLimitOrUnavailable(err) {
-			return "", err
+		// Fall through: try other secondaries, then Gemini, unless single-mode.
+		if mode != "single" {
+			text, err = trySecondary("")
+			if err == nil {
+				return text, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			if g.ConfiguredPrimary() {
+				if emitPhase != nil {
+					emitPhase("Secondary failed — trying gemini…")
+				}
+				text, err = tryGemini()
+				if err == nil {
+					return text, nil
+				}
+				firstErr = fmt.Errorf("%v; gemini: %v", firstErr, err)
+			}
 		}
-		if emitPhase != nil {
-			emitPhase("Primary rate-limited — trying secondary…")
+		if firstErr != nil {
+			return "", firstErr
 		}
+		return "", fmt.Errorf("AI key missing — add GROQ_API_KEY or GEMINI_API_KEY to .ai.env / backend/.ai.env and restart.")
 	}
 
-	for _, b := range g.secondary {
-		if !b.Configured() {
-			continue
-		}
-		if emitPhase != nil {
-			emitPhase("Using " + b.Name() + "…")
-		}
-		text, err := b.Generate(ctx, prompt, maxTokens)
+	// Default: Gemini first, then secondaries.
+	if g.ConfiguredPrimary() {
+		text, err := tryGemini()
 		if err == nil {
 			return text, nil
 		}
-		if firstErr == nil {
-			firstErr = err
-		} else {
-			firstErr = fmt.Errorf("%v; %s: %v", firstErr, b.Name(), err)
+		firstErr = err
+		// Failover/auto: try secondary on any failure when a secondary exists.
+		// Single mode: only continue on rate-limit/unavailable class errors.
+		if mode == "single" && !isRateLimitOrUnavailable(err) {
+			return "", err
 		}
+		if mode == "single" {
+			hasSec := false
+			for _, b := range g.secondary {
+				if b.Configured() {
+					hasSec = true
+					break
+				}
+			}
+			if !hasSec {
+				return "", err
+			}
+		}
+		if emitPhase != nil {
+			emitPhase("Primary failed — trying secondary…")
+		}
+	}
+
+	text, err := trySecondary("")
+	if err == nil {
+		return text, nil
+	}
+	if firstErr == nil {
+		firstErr = err
+	} else {
+		firstErr = fmt.Errorf("%v; %v", firstErr, err)
 	}
 
 	if firstErr != nil {
 		return "", firstErr
 	}
-	return "", fmt.Errorf("AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to backend/.ai.env and restart.")
+	return "", fmt.Errorf("AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to .ai.env / backend/.ai.env and restart.")
 }
 
 // resolveAPIKey finds the Gemini key without ever hard-coding it. Precedence:
