@@ -119,7 +119,7 @@ function CompanionFace({ doc }: { doc: Document }) {
             {runningHere ? "Working…" : "Concise explanation"}
           </h4>
           <p className="rounded-lg bg-iris-50 px-3 py-2.5 text-[12.5px] leading-relaxed text-ink-700">
-            {runningHere ? running?.message : companion.explanation}
+            {runningHere ? running?.message : companion.explanation?.trim() ? companion.explanation : "AI unavailable now."}
           </p>
         </section>
 
@@ -127,20 +127,23 @@ function CompanionFace({ doc }: { doc: Document }) {
           <h4 className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold text-ink-900">
             <Icon name="bookOpen" size={13} className="text-iris-600" /> Related sources
           </h4>
-          <div className="space-y-1.5">
-            {[
-              { t: "Oxidative Phosphorylation and ATP Synthesis", m: "Nelson et al. (2021) · Nature Reviews Molecular Cell Biology" },
-              { t: "Structure and Mechanism of ATP Synthase", m: "Petersen & Junge (2019) · Biochimica et Biophysica Acta" },
-            ].map((r) => (
-              <div key={r.t} className="flex items-start gap-2.5 rounded-lg border border-line-soft bg-cream-50 px-3 py-2">
-                <Icon name="fileText" size={13} className="mt-0.5 shrink-0 text-ink-400" />
-                <div className="min-w-0">
-                  <p className="truncate text-[12px] font-medium text-ink-900">{r.t}</p>
-                  <p className="truncate text-[10.5px] text-mute">{r.m}</p>
+          {companion.relatedSources && companion.relatedSources.length > 0 ? (
+            <div className="space-y-1.5">
+              {companion.relatedSources.map((r) => (
+                <div key={r.title} className="flex items-start gap-2.5 rounded-lg border border-line-soft bg-cream-50 px-3 py-2">
+                  <Icon name="fileText" size={13} className="mt-0.5 shrink-0 text-ink-400" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[12px] font-medium text-ink-900">{r.title}</p>
+                    <p className="truncate text-[10.5px] text-mute">{r.meta}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-line-soft bg-cream-50 px-3 py-2.5 text-[12px] text-mute">
+              No related sources — choose “Find related sources”.
+            </p>
+          )}
         </section>
 
         <div className="grid grid-cols-2 gap-2">

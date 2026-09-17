@@ -293,6 +293,8 @@ export interface ReaderUIState {
     passage: string;
     explanation: string;
     sourceLabel: string;
+    /** Related sources returned by the provider with the explanation. */
+    relatedSources?: { title: string; meta: string }[];
   } | null;
 }
 

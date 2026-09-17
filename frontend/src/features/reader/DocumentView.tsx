@@ -208,7 +208,7 @@ export default function SourceDocumentView({ doc }: { doc: Document }) {
         ))}
         <p className="mt-10 flex items-center gap-2 border-t border-line-soft pt-4 text-[11.5px] text-mute">
           <Icon name="info" size={12} />
-          Mock structured render of {meta.path ?? meta.format} — real {meta.format.toUpperCase()} rendering plugs in here (docs/document-rendering.md)
+          {meta.path ?? "Workspace file"} · {meta.format.toUpperCase()} document
         </p>
       </div>
 

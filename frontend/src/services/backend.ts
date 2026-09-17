@@ -44,9 +44,17 @@ function wailsApp(): WailsApp | null {
 }
 
 /**
+ * Typed open failure (tasks.md 1.2). Mirrors models.OpenFailureReason in
+ * backend/models/models.go — keep in sync.
+ */
+export type OpenFailureReason = "unsupported" | "not_found" | "permission_denied" | "too_large" | "parse_error";
+
+/**
  * Real content of one workspace file, as returned by App.OpenFile.
- * blocksJSON decodes to DocumentBlock[] (types/domain.ts). Null = mock mode
- * or unsupported type — the caller falls back to mock extraction.
+ * blocksJSON decodes to DocumentBlock[] (types/domain.ts).
+ * A classified failure arrives as a VALUE with `reason` set and blocksJSON
+ * empty — never a rejection — so the caller can tell "unsupported type"
+ * apart from real read failures. Null = no bridge (mock/browser mode).
  */
 export interface OpenedFile {
   title: string;
@@ -55,6 +63,9 @@ export interface OpenedFile {
   kind?: string;
   /** Absolute opening root tagging the file's folder (tasks.md 1.1 option b). */
   root?: string;
+  /** Empty on success; set on classified failure (tasks.md 1.2). */
+  reason?: OpenFailureReason;
+  detail?: string;
 }
 
 export interface FilesystemService {
@@ -67,8 +78,11 @@ export interface FilesystemService {
   selectFolder(): Promise<string | null>;
   /**
    * Open one workspace file by its Path token (App.OpenFile → Documents).
-   * Real content for .txt/.md today; null in mock mode or for unsupported
-   * types (caller falls back to the mock document factory).
+   * Real content for .txt/.md today. Null only when no bridge exists
+   * (mock/browser mode). Classified failures (unsupported type, missing
+   * file, access denied, too large, unreadable) resolve with `reason`
+   * set — the caller shows an honest error and opens nothing. A rejection
+   * means an unexpected bridge failure, not a known file problem.
    */
   openFile(path: string): Promise<OpenedFile | null>;
   /** OS "show in folder" — a Go-only capability. */
@@ -198,11 +212,10 @@ const WailsFilesystem: FilesystemService = {
   async openFile(path) {
     const app = wailsApp();
     if (!app) return null;
-    try {
-      return await app.OpenFile(path);
-    } catch {
-      return null; // unsupported type / read error → caller uses mock fallback
-    }
+    // No catch-and-null here (tasks.md 1.2): a read failure must reach the
+    // caller as a typed `reason` value or a rejection — never collapse into
+    // the mock path. Only truly unexpected bridge errors reject.
+    return await app.OpenFile(path);
   },
   async showContainingFolder(path) {
     const app = wailsApp();

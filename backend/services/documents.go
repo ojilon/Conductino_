@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,9 +39,45 @@ type DocumentService interface {
 }
 
 // ErrUnsupportedType signals "no extractor for this extension yet" (PDF,
-// DOCX, … until their arms land). Callers treat it as fallback-to-mock,
-// not as a hard failure.
+// DOCX, … until their arms land).
 var ErrUnsupportedType = fmt.Errorf("unsupported file type for extraction")
+
+// OpenError is a classified open failure (tasks.md 1.2): the Reason lets the
+// UI decide fallback-vs-error without string-matching error text.
+type OpenError struct {
+	Reason models.OpenFailureReason
+	Detail string
+	Err    error
+}
+
+func (e *OpenError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("%s: %s", string(e.Reason), e.Detail)
+	}
+	return string(e.Reason)
+}
+
+func (e *OpenError) Unwrap() error { return e.Err }
+
+// ReasonOf classifies any open error into a wire reason + detail. Unknown
+// errors become parse_error so the UI shows an honest failure, never a
+// fabricated document.
+func ReasonOf(err error) (models.OpenFailureReason, string) {
+	var oe *OpenError
+	if errors.As(err, &oe) {
+		return oe.Reason, oe.Detail
+	}
+	if errors.Is(err, ErrUnsupportedType) {
+		return models.ReasonUnsupported, err.Error()
+	}
+	if os.IsNotExist(err) {
+		return models.ReasonNotFound, err.Error()
+	}
+	if os.IsPermission(err) {
+		return models.ReasonPermissionDenied, err.Error()
+	}
+	return models.ReasonParseError, err.Error()
+}
 
 type Documents struct{}
 
@@ -61,7 +98,11 @@ func (d *Documents) OpenFile(absPath string) (models.OpenedDocument, error) {
 		// Proves the click → path → content pipe end-to-end.
 		return openTextFile(absPath)
 	default:
-		return models.OpenedDocument{}, fmt.Errorf("%w: .%s", ErrUnsupportedType, ext)
+		return models.OpenedDocument{}, &OpenError{
+			Reason: models.ReasonUnsupported,
+			Detail: fmt.Sprintf("no extractor for .%s yet", ext),
+			Err:    fmt.Errorf("%w: .%s", ErrUnsupportedType, ext),
+		}
 	}
 }
 
@@ -86,10 +127,14 @@ const (
 func openTextFile(absPath string) (models.OpenedDocument, error) {
 	raw, err := os.ReadFile(absPath)
 	if err != nil {
-		return models.OpenedDocument{}, err
+		reason, _ := ReasonOf(err)
+		// ReasonOf falls back to parse_error for unclassified os errors,
+		// which is correct here; keep not_found / permission_denied exact.
+		return models.OpenedDocument{}, &OpenError{Reason: reason, Detail: err.Error(), Err: err}
 	}
 	if len(raw) > maxTextBytes {
-		return models.OpenedDocument{}, fmt.Errorf("text file too large (%d bytes)", len(raw))
+		err := fmt.Errorf("text file too large (%d bytes)", len(raw))
+		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonTooLarge, Detail: err.Error(), Err: err}
 	}
 	// Blank-line separated paragraphs; single newlines stay inside a block.
 	paras := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n")

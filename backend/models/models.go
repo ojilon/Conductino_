@@ -47,8 +47,13 @@ type FileTreeNode struct {
 // OpenedDocument is the result of opening one workspace file: real extracted
 // content for supported types. BlocksJSON decodes to DocumentBlock[] on the
 // TS side (frontend/src/types/domain.ts). Produced by Documents.OpenFile,
-// carried over the boundary by App.OpenFile. Unsupported types come back as
-// an error (ErrUnsupportedType) so the UI can fall back to its mock.
+// carried over the boundary by App.OpenFile.
+//
+// Typed failure (tasks.md 1.2): classified failures are returned as a VALUE
+// with Reason set and BlocksJSON empty — not as a Go error — so the UI can
+// tell "unsupported type" (the only case that may use a placeholder) apart
+// from real read failures without string-matching error text. A Go error
+// return is reserved for truly unexpected bridge failures.
 type OpenedDocument struct {
 	Title      string `json:"title"`
 	BlocksJSON string `json:"blocksJSON"`
@@ -58,7 +63,23 @@ type OpenedDocument struct {
 	// Tags the document with its opening folder (tasks.md 1.1 option b)
 	// so the UI can detect stale tabs after a folder switch.
 	Root string `json:"root,omitempty"`
+	// Reason is empty on success; otherwise one of the OpenFailureReason
+	// values below with Detail carrying the human-readable cause.
+	Reason string `json:"reason,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
+
+// OpenFailureReason classifies why a file could not be opened. Mirrors the
+// TS OpenFailureReason in frontend/src/services/backend.ts — keep in sync.
+type OpenFailureReason string
+
+const (
+	ReasonUnsupported      OpenFailureReason = "unsupported"
+	ReasonNotFound         OpenFailureReason = "not_found"
+	ReasonPermissionDenied OpenFailureReason = "permission_denied"
+	ReasonTooLarge         OpenFailureReason = "too_large"
+	ReasonParseError       OpenFailureReason = "parse_error"
+)
 
 type AIOperation string
 

@@ -70,6 +70,8 @@ export namespace models {
 	    pageCount?: number;
 	    kind?: string;
 	    root?: string;
+	    reason?: string;
+	    detail?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new OpenedDocument(source);
@@ -82,6 +84,8 @@ export namespace models {
 	        this.pageCount = source["pageCount"];
 	        this.kind = source["kind"];
 	        this.root = source["root"];
+	        this.reason = source["reason"];
+	        this.detail = source["detail"];
 	    }
 	}
 	export class Source {

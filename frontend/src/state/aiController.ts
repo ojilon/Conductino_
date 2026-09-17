@@ -95,20 +95,41 @@ export function useAIRunners() {
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
           onBrowseSources: () => undefined,
           onDone: (result) => {
+            // No scaffolded placeholder: an empty explanation is shown
+            // verbatim as unavailable where the response was expected.
+            const explanation = result.explanation?.trim() ? result.explanation : "AI unavailable now.";
             dispatch({
               type: "reader.ui",
               patch: {
                 companion: {
                   documentId: selection.documentId,
                   passage: selection.text,
-                  explanation: result.explanation ?? "",
+                  explanation,
                   sourceLabel,
+                  relatedSources: result.relatedSources ?? [],
                 },
               },
             });
             finish(id, { status: "completed", message: `${operation.replace("AI_", "").toLowerCase()} completed` });
           },
-          onError: (message) => finish(id, { status: "error", error: message }),
+          onError: (message) => {
+            // Put the failure where the response was supposed to go, so the
+            // panel never shows a stale answer or a blank space.
+            dispatch({
+              type: "reader.ui",
+              patch: {
+                companion: {
+                  documentId: selection.documentId,
+                  passage: selection.text,
+                  explanation: "AI unavailable now.",
+                  sourceLabel,
+                  relatedSources: [],
+                },
+              },
+            });
+            finish(id, { status: "error", error: message });
+            dispatch({ type: "toast", message: "AI unavailable now." });
+          },
         },
       );
     },
@@ -139,10 +160,12 @@ export function useAIRunners() {
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
           onBrowseSources: () => undefined,
           onDone: (result) => {
-            const insertion = result.insertion;
+            const insertion = result.insertion?.text?.trim() ? result.insertion : undefined;
             const changeId = uid("chg");
             const blockId = uid("s-ai");
-            const text = insertion ? `${insertion.text} ${insertion.citation}` : `— “${selection.text.slice(0, 120)}”`;
+            const text = insertion
+              ? `${insertion.text} ${insertion.citation}`
+              : `— “${selection.text.slice(0, 120)}” (AI unavailable — pasted without drafting)`;
             dispatch({
               type: "change.propose",
               change: {
@@ -168,7 +191,12 @@ export function useAIRunners() {
             dispatch({ type: "selection.set", selection: null });
             dispatch({ type: "toast", message: "Change proposed in Research Summary — review it in the document" });
           },
-          onError: (message) => finish(id, { status: "error", error: message }),
+          // No fabricated insertion on failure: say so where the result
+          // was expected (toast) and leave the summary untouched.
+          onError: (message) => {
+            finish(id, { status: "error", error: message });
+            dispatch({ type: "toast", message: "AI unavailable now — nothing was added to the summary." });
+          },
         },
       );
     },
@@ -192,13 +220,19 @@ export function useAIRunners() {
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
           onBrowseSources: () => undefined,
           onDone: (result) => {
-            if (result.revision) {
+            if (result.revision?.trim()) {
               dispatch({ type: "change.revise", id: changeId, newContent: result.revision });
+              finish(id, { status: "completed", message: "Revised the proposed change", changeIds: [changeId] });
+              dispatch({ type: "toast", message: "AI revised the change — review again" });
+            } else {
+              finish(id, { status: "completed", message: "Revise finished with no suggestion", changeIds: [changeId] });
+              dispatch({ type: "toast", message: "AI unavailable now — change left as-is." });
             }
-            finish(id, { status: "completed", message: "Revised the proposed change", changeIds: [changeId] });
-            dispatch({ type: "toast", message: "AI revised the change — review again" });
           },
-          onError: (message) => finish(id, { status: "error", error: message }),
+          onError: (message) => {
+            finish(id, { status: "error", error: message });
+            dispatch({ type: "toast", message: "AI unavailable now — change left as-is." });
+          },
         },
       );
     },
@@ -209,20 +243,27 @@ export function useAIRunners() {
 
   const runRelatedSources = useCallback(() => {
     const doc = activeReaderDocument(state);
+    if (!doc) {
+      dispatch({ type: "toast", message: "Open a document first to show AI response." });
+      return;
+    }
     const id = start("AI_SEARCH", {
-      documentId: doc?.id,
+      documentId: doc.id,
       message: "Finding related sources…",
     });
     cancels.current[id] = getAIProvider().run(
-      { operation: "AI_SEARCH", query: "related sources", documentId: doc?.id },
+      { operation: "AI_SEARCH", query: "related sources", documentId: doc.id },
       {
         onPhase: (_i, label) => dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
         onBrowseSources: () => undefined,
         onDone: () => {
           finish(id, { status: "completed", message: "Refreshed related sources" });
-          dispatch({ type: "toast", message: "Related sources refreshed (mock provider)" });
+          dispatch({ type: "toast", message: "Related-source lookup is not available yet." });
         },
-        onError: (message) => finish(id, { status: "error", error: message }),
+        onError: (message) => {
+          finish(id, { status: "error", error: message });
+          dispatch({ type: "toast", message: "AI unavailable now." });
+        },
       },
     );
   }, [state, start, finish, dispatch]);

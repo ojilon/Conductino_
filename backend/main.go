@@ -23,6 +23,8 @@ package backend
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
 	// models: shared wire types (the "what" crosses to the UI as JSON).
 	// Mirrors frontend/src/types/domain.ts — keep the two in sync manually.
@@ -115,19 +117,41 @@ func (b *Backend) SetLibraryRoot(path string) {
 // carried on FileTreeNode). The token is resolved + containment-checked
 // against the workspace root (Filesystem.Resolve — escapes rejected), then
 // dispatched by extension in Documents: plain text reads for real today,
-// PDF/DOCX/… return ErrUnsupportedType so the UI falls back to its mock.
+// other types report ReasonUnsupported.
+//
+// Typed failures (tasks.md 1.2): classified failures come back as a VALUE
+// with Reason set and BlocksJSON empty — never a Go error — so the UI shows
+// an honest per-reason message and opens nothing. A Go error return is
+// reserved for truly unexpected bridge failures.
 // The returned document is tagged with the absolute opening root
 // (tasks.md 1.1 option b) so the UI can detect stale tabs after a switch.
 func (b *Backend) OpenFile(relPath string) (models.OpenedDocument, error) {
+	root := b.fs.Root()
+	title := strings.TrimSuffix(filepath.Base(relPath), filepath.Ext(relPath))
+	if title == "" || title == "." {
+		title = relPath
+	}
 	abs, err := b.fs.Resolve(relPath)
 	if err != nil {
-		return models.OpenedDocument{}, err
+		reason, detail := services.ReasonOf(err)
+		// Resolve only fails on escapes / bad roots: a containment
+		// rejection is a refusal, not a missing extractor — surface it as
+		// permission_denied, never as "unsupported" (which the UI treats
+		// leniently) and never as a fabricated document.
+		if reason == models.ReasonUnsupported || strings.Contains(detail, "escapes workspace") {
+			reason = models.ReasonPermissionDenied
+		}
+		if reason != models.ReasonNotFound && reason != models.ReasonPermissionDenied {
+			reason = models.ReasonParseError
+		}
+		return models.OpenedDocument{Title: title, Reason: string(reason), Detail: detail, Root: root}, nil
 	}
 	opened, err := b.docs.OpenFile(abs)
 	if err != nil {
-		return models.OpenedDocument{}, err
+		reason, detail := services.ReasonOf(err)
+		return models.OpenedDocument{Title: title, Reason: string(reason), Detail: detail, Root: root}, nil
 	}
-	opened.Root = b.fs.Root()
+	opened.Root = root
 	return opened, nil
 }
 

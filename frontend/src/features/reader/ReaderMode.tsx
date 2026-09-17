@@ -9,16 +9,32 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument } from "../../state/appState";
-import { backend } from "../../services/backend";
-import { ResizablePanel } from "../../components/ui";
+import { backend, type OpenedFile } from "../../services/backend";
+import { EmptyState, ResizablePanel } from "../../components/ui";
+import { Icon } from "../../components/icons";
 import { isStaleRoot, uid } from "../../utils/helpers";
-import { makeDocumentFromSource } from "../../mock/data";
 import type { DocumentBlock, FileTreeNode, Source } from "../../types/domain";
 import ReaderSidebar from "./ReaderSidebar";
 import ReaderTabs, { labelForPath } from "./ReaderTabs";
 import SourceDocumentView from "./DocumentView";
 import SummaryDocumentView from "./SummaryDocumentView";
 import AIReadingPanel from "./AIReadingPanel";
+
+/** Human-readable label per typed open failure (tasks.md 1.2). */
+function openFailureLabel(reason: NonNullable<OpenedFile["reason"]>): string {
+  switch (reason) {
+    case "unsupported":
+      return "extraction is not implemented for this file type yet";
+    case "not_found":
+      return "file not found";
+    case "permission_denied":
+      return "access denied";
+    case "too_large":
+      return "file too large to open";
+    case "parse_error":
+      return "could not be read";
+  }
+}
 
 export default function ReaderMode() {
   const { state, dispatch } = useApp();
@@ -116,85 +132,76 @@ export default function ReaderMode() {
       });
       return;
     }
-    // File without a loaded document → try the real pipe first
+    // File without a loaded document → real extraction pipe only
     // (App.OpenFile: extension-dispatched extraction, .txt/.md today).
-    // Anything else (mock mode, unsupported type, read error) falls back to
-    // the mock factory so the click still opens something demonstrable.
+    // No mock fallback (tasks.md 1.2): every failure — unsupported type,
+    // missing file, access denied, too large, unreadable — shows an honest
+    // error naming the file and reason, and opens nothing.
     const ext = (node.ext ?? "pdf").toLowerCase();
+    let opened: OpenedFile | null;
     try {
-      const opened = await backend.filesystem.openFile(node.path);
-      if (opened) {
-        const parsed: unknown = JSON.parse(opened.blocksJSON);
-        const blocks = (parsed as { blocks: DocumentBlock[] }).blocks;
-        if (!Array.isArray(blocks)) throw new Error("bad blocks shape");
-        const sourceId = uid("src");
-        const docId = uid("doc");
-        const firstText = blocks
-          .map((b) => b.segments.map((s) => s.text).join(""))
-          .find((t) => t.trim()) ?? "";
-        const source: Source = {
-          id: sourceId,
-          kind: "text",
-          title: opened.title || labelForPath(node.label),
-          origin: node.path, // root-relative token, not a built path
-          typeLabel: `${ext.toUpperCase()} document`,
-          abstract: firstText.slice(0, 280),
-          saved: false,
-          inReader: true,
-          documentId: docId,
-        };
-        dispatch({ type: "source.add", source });
-        dispatch({
-          type: "doc.add",
-          document: {
-            id: docId,
-            kind: "source",
-            sourceId,
-            metadata: {
-              title: source.title,
-              format: "text",
-              pageCount: opened.pageCount ?? 1,
-              path: node.path,
-              // Tag with the opening folder (1.1 option b): Go's absolute root
-              // wins (race-free); fall back to the UI-known current root.
-              rootPath: opened.root ?? currentRoot ?? undefined,
-            },
-            blocks,
-            highlights: [],
-            currentPage: 1,
-          },
-        });
-        const label = source.title;
-        dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: label.length > 18 ? `${label.slice(0, 16)}…` : label });
-        dispatch({ type: "toast", message: `Opened ${node.label}` });
-        return;
-      }
-    } catch {
-      // fall through to the mock factory below
+      opened = await backend.filesystem.openFile(node.path);
+    } catch (e) {
+      dispatch({ type: "toast", message: `Could not open ${node.label}: ${e instanceof Error ? e.message : "unexpected error"}` });
+      return;
     }
-    // Mock fallback: fabricate the DocumentModel locally.
+    if (!opened) {
+      dispatch({ type: "toast", message: "Opening files needs the desktop app — run `wails dev`." });
+      return;
+    }
+    if (opened.reason) {
+      dispatch({ type: "toast", message: `Could not open ${node.label}: ${openFailureLabel(opened.reason)}${opened.detail ? ` — ${opened.detail}` : ""}` });
+      return;
+    }
+    let blocks: DocumentBlock[];
+    try {
+      const parsed: unknown = JSON.parse(opened.blocksJSON);
+      blocks = (parsed as { blocks: DocumentBlock[] }).blocks;
+      if (!Array.isArray(blocks)) throw new Error("bad blocks shape");
+    } catch {
+      dispatch({ type: "toast", message: `Could not open ${node.label}: unexpected content from the extractor` });
+      return;
+    }
     const sourceId = uid("src");
     const docId = uid("doc");
-    const title = labelForPath(node.label);
+    const firstText = blocks
+      .map((b) => b.segments.map((s) => s.text).join(""))
+      .find((t) => t.trim()) ?? "";
     const source: Source = {
       id: sourceId,
-      kind: ext === "docx" ? "docx" : ext === "html" ? "html" : ext === "txt" ? "text" : "pdf",
-      title,
-      origin: node.path, // already root-relative (FileTreeNode.path token)
+      kind: "text",
+      title: opened.title || labelForPath(node.label),
+      origin: node.path, // root-relative token, not a built path
       typeLabel: `${ext.toUpperCase()} document`,
-      abstract: `Workspace file “${node.path}”, extracted with the mock document pipeline. Real extraction (pdf.js / docx) is a documented integration point — see docs/document-rendering.md.`,
+      abstract: firstText.slice(0, 280),
       saved: false,
       inReader: true,
       documentId: docId,
     };
     dispatch({ type: "source.add", source });
-    const mockDoc = makeDocumentFromSource(sourceId, source, docId);
-    // Tag mock-fallback docs too — the same stale-tab rule applies: after a
-    // folder switch this tab belongs to the folder it was opened from.
-    if (currentRoot) mockDoc.metadata.rootPath = currentRoot;
-    dispatch({ type: "doc.add", document: mockDoc });
-    dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: title.length > 18 ? `${title.slice(0, 16)}…` : title });
-    dispatch({ type: "toast", message: `Opened ${node.label} (mock extraction)` });
+    dispatch({
+      type: "doc.add",
+      document: {
+        id: docId,
+        kind: "source",
+        sourceId,
+        metadata: {
+          title: source.title,
+          format: "text",
+          pageCount: opened.pageCount ?? 1,
+          path: node.path,
+          // Tag with the opening folder (1.1 option b): Go's absolute root
+          // wins (race-free); fall back to the UI-known current root.
+          rootPath: opened.root ?? currentRoot ?? undefined,
+        },
+        blocks,
+        highlights: [],
+        currentPage: 1,
+      },
+    });
+    const label = source.title;
+    dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: label.length > 18 ? `${label.slice(0, 16)}…` : label });
+    dispatch({ type: "toast", message: `Opened ${node.label}` });
   };
 
   return (
@@ -241,16 +248,40 @@ export default function ReaderMode() {
         </div>
       </div>
 
-      {ui.aiPanelOpen && doc && (
-        <ResizablePanel
-          width={ui.aiPanelWidth}
-          min={300}
-          max={520}
-          onWidth={(w) => dispatch({ type: "reader.ui", patch: { aiPanelWidth: w } })}
-        >
-          <AIReadingPanel doc={doc} />
-        </ResizablePanel>
-      )}
+      {ui.aiPanelOpen &&
+        (doc ? (
+          <ResizablePanel
+            width={ui.aiPanelWidth}
+            min={300}
+            max={520}
+            onWidth={(w) => dispatch({ type: "reader.ui", patch: { aiPanelWidth: w } })}
+          >
+            <AIReadingPanel doc={doc} />
+          </ResizablePanel>
+        ) : (
+          <ResizablePanel
+            width={ui.aiPanelWidth}
+            min={300}
+            max={520}
+            onWidth={(w) => dispatch({ type: "reader.ui", patch: { aiPanelWidth: w } })}
+          >
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex items-center justify-between border-b border-line-soft px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Icon name="sparkles" size={15} className="text-iris-600" />
+                  <h2 className="font-serif text-[15px] font-semibold text-ink-900">AI Reading</h2>
+                </div>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col justify-center">
+                <EmptyState
+                  icon="sparkles"
+                  title="No document open"
+                  hint="Open a document first to show AI response."
+                />
+              </div>
+            </div>
+          </ResizablePanel>
+        ))}
     </div>
   );
 }
