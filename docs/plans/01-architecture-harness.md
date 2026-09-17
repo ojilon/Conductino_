@@ -71,9 +71,14 @@ Frontend keeps only the **active thread view** + composer draft in React
 state; history loads from backend.
 
 ### 3.3 @ mentions
-- Composer parses `@token` against library tree + open sources + summary.
-- On send, resolved mentions become explicit ids/paths in the request so
-  the harness does not guess.
+- Composer parses `@token` against library tree + open sources + summary
+  (`state/mentions.ts` — title/label/path substring match, first hit wins).
+- On send, resolved mentions become explicit `mentionIds` in the request so
+  the harness does not guess; the raw `@token` stays in the query text.
+- A mentioned summary overrides `workspace.primarySummaryId` as the
+  proposal target. The live selection rides along as the region anchor.
+- Status: LANDED (autocomplete dropdown in `ChatFace` is a typing aid;
+  send-time resolution is ground truth).
 
 ## 4. Context assembly (algorithms on backend)
 
@@ -99,11 +104,14 @@ Minimal tool set (Go, invoked only by the AI service loop):
 | `list_workspace` | tree under root | root only |
 | `read_source` | text extract for path/id | Resolve containment + allowed ext |
 | `read_summary` | current summary content | workspace’s summary only |
-| `propose_summary_edit` | create DocumentChange(s) | summary id must match mapping |
-| `search_in_workspace` | optional keyword search | root only |
+| `propose_summary_edit` | create DocumentChange(s): `op=insert\|modify\|delete`, `target`, `text` | summary id must match mapping; user accepts in UI |
+| `search_in_workspace` | quoted keyword snippets over readable files | root jail + ext allowlist + file/match/output caps |
+
+No shell, no arbitrary path, no write to sources. The summary is a living
+document: the model may redefine, restructure, or remove — never
+append-only. The user gatekeeps every proposal with approve / revise.
 
 No shell, no arbitrary path, no write to sources.
-
 Tool results are injected into the same turn’s model context. Streaming
 phases already exist (`onPhase`); extend with tool-phase labels.
 

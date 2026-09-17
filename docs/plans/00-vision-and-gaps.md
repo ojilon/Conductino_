@@ -22,10 +22,10 @@ the summary — not just one-shot answers on a highlighted snippet.
 | Continued conversation | Missing | — |
 | Folder-scoped AI tools | Missing | — |
 | Create summary under open folder | Missing | summaries exist in state only |
-| Dynamic summary (merge/improve/shorten) | Missing (append-style insert only) | `AI_MERGE` |
-| Session/folder → summary mapping | Design note only | `tasks.md` §2, first-summary-wins |
-| @-mentions of files/sources | Missing | — |
-| Reference a specific change/diff in chat | Missing | inspect/revise only |
+| Dynamic summary (merge/improve/shorten) | Working (insert/modify/delete proposals, user-gated) | `propose_summary_edit` + `change.*` |
+| Session/folder → summary mapping | Working | `WorkspaceSession.primarySummaryId` |
+| @-mentions of files/sources | Working (resolve to `mentionIds` + autocomplete) | `state/mentions.ts` |
+| Reference a specific change/diff in chat | Partial (changeId revise via panel; chat-targeted revise planned) | `runRevise` / Phase 9 |
 | Sources read-only, summary editable | Correct direction | `kind: source \| summary` |
 | Slate / rich editor | Not present | contentEditable plain text |
 | DOCX round-trip for summary | Not present | planned in `document-rendering.md` |

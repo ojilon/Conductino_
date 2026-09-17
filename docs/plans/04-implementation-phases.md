@@ -52,3 +52,23 @@ Each phase should leave the app shippable (no broken reader).
 - [x] `WriteSummaryDOCX` on Backend + Wails App; path containment under library root
 - [x] Frontend `writeSummaryDOCX` + Save DOCX control on summary view
 - [x] Unit tests: round-trip, path escape rejection, default name
+
+## Phase 9 — @-resolution + full proposal edits (living summary)
+- [x] `mentionIds` wire (TS + Go) — `@doc` tokens resolve to explicit ids
+- [x] Composer autocomplete dropdown (typing aid; send-time resolution is truth)
+- [x] Selection rides along in `AI_CHAT` as the region anchor
+- [x] `propose_summary_edit` ops: insert / modify / delete (never append-only)
+- [x] Prompt harmonization: redefine / restructure / remove allowed, user gatekeeps
+- [x] Pending delete rendering in summary view (strike-through card)
+- [x] `search_in_workspace` tool (keyword, root-only, capped snippets)
+- [x] `changeId`-targeted chat revise (`focusedChange`: explicit / selection-overlap / revise-intent; same-block supersede)
+
+## Phase 10 — Stable ids + extract cache + ranges (issues 7/8/19/23/24/26/27/28)
+- [x] Content-addressed block IDs (`b-<hash>`, `services/blockids.go`) — reopening an unchanged file yields identical IDs; highlights/changes/anchors survive
+- [x] Bounded reads: Stat-gated size refusal + `LimitReader` (oversized files never load into memory)
+- [x] `extract_cache` table (SQLite + memory): root-anchored path + mtime + size key, 200-entry LRU eviction; open path consults it
+- [x] Range selection/highlights (`TextSelection.range`, `Highlight.range`, UTF-16 block offsets; multi-block stays block-anchored)
+- [x] Range-aware highlight rendering + range in context packs
+- [x] Pending modifies as inline Slate decorations (click to accept/reject/revise); deletes/inserts stay card-based
+- [ ] PDF text-layer coordinates (needs a `pdfjs-dist` leaf — block offsets are the interim system)
+- [ ] Frontend windowed doc cache (open tabs still fully resident; backend cache covers re-extract cost)

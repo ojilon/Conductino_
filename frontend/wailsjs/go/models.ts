@@ -1,5 +1,25 @@
 export namespace models {
 	
+	export class FocusedChange {
+	    id?: string;
+	    op?: string;
+	    blockId?: string;
+	    oldContent?: string;
+	    newContent?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FocusedChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.op = source["op"];
+	        this.blockId = source["blockId"];
+	        this.oldContent = source["oldContent"];
+	        this.newContent = source["newContent"];
+	    }
+	}
 	export class ChatTurn {
 	    role: string;
 	    content: string;
@@ -31,6 +51,8 @@ export namespace models {
 	    mode?: string;
 	    summaryContent?: string;
 	    primarySummaryId?: string;
+	    mentionIds?: string[];
+	    focusedChange?: FocusedChange;
 	    requestId?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -55,6 +77,8 @@ export namespace models {
 	        this.mode = source["mode"];
 	        this.summaryContent = source["summaryContent"];
 	        this.primarySummaryId = source["primarySummaryId"];
+	        this.mentionIds = source["mentionIds"];
+	        this.focusedChange = this.convertValues(source["focusedChange"], FocusedChange);
 	        this.requestId = source["requestId"];
 	    }
 	
@@ -119,6 +143,7 @@ export namespace models {
 		    return a;
 		}
 	}
+	
 	export class OpenedDocument {
 	    title: string;
 	    blocksJSON: string;

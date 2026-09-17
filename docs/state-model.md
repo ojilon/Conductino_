@@ -53,6 +53,8 @@ AppState = {
 - **Multi-session scaling (known limitation):** `sources` / `documents` / `changes` are flat global maps with no session ownership. `runIncludeInSummary` picks its target with first-summary-wins (`aiController.ts:122`), which breaks the moment two session/summary pairs coexist. Do not build features assuming "the" summary or "the" folder — see `tasks.md` §2 for the `sessionId` design constraint.
 - **Summary ↔ Sources:** `Document.kind === "summary"` carries `sourceIds[]` — the explicit "these papers fed this summary" relationship. The top bar's "N sources contribute to this summary" reads exactly this. Adding a source happens in one reducer case (`summary.addSource`), triggered when an AI merge proposes an insertion from that source.
 - **Change ↔ Activity ↔ Source:** `DocumentChange.activityId → AIActivity` and `change.sourceId → Source` answer "where did this edit come from and who proposed it" (shown in the Inspect view).
+- **Chat targeting:** composer `@tokens` resolve to `AIRequest.mentionIds` (`state/mentions.ts`); a mentioned summary overrides the workspace primary as proposal target. The live `selection` rides along as the region anchor.
+- **Living summary:** proposals are insert/modify/delete (never append-only) — the model may redefine or restructure against the summary snapshot; every change stays pending until the user accepts or revises.
 
 ## DocumentModel (the renderer contract)
 
@@ -85,7 +87,11 @@ native selection (mouseup)
   → "selection.set" null (where appropriate)
 ```
 
-`TextSelection` stores viewport coordinates for the toolbar; scrolling the document clears it (cheap and predictable). Block-level anchoring is today's precision; a range-precise selection API belongs to the renderer upgrade (docs/document-rendering.md).
+`TextSelection` stores viewport coordinates for the toolbar plus optional
+`range { start, end }` offsets in the block's text (single-block selections;
+multi-block stays block-anchored); scrolling the document clears it (cheap
+and predictable). Block IDs are content-addressed and stable across
+re-extracts, so selections, highlights, and pending changes survive reopening.
 
 ## Where things live — quick index
 

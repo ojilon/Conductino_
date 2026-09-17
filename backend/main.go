@@ -4,6 +4,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -82,7 +83,21 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 		// wrapper, so ReasonOf falls back to parse_error — still a value.
 		return &models.OpenedDocument{Root: root, Reason: string(reason), Detail: detail}, nil
 	}
-	opened, err := b.docs.OpenFile(abs)
+	// Extract cache (issues 24+26): unchanged files never re-extract.
+	// Key is root-anchored so the same rel token under another folder can't
+	// collide. Cache errors are non-fatal — fall through to extraction.
+	cacheKey := root + "\x00" + path
+	var statMtime, statSize int64 = -1, -1
+	if info, serr := os.Stat(abs); serr == nil && !info.IsDir() {
+		statMtime, statSize = info.ModTime().UnixMilli(), info.Size()
+		if hit, cerr := b.storage.GetCachedExtract(cacheKey, statMtime, statSize); cerr == nil && hit != nil {
+			return &models.OpenedDocument{
+				Title: hit.Title, BlocksJSON: hit.BlocksJSON,
+				PageCount: hit.PageCount, Kind: hit.Kind, Root: root,
+			}, nil
+		}
+	}
+	opened, err := b.docs.OpenFile(abs, path)
 	if err != nil {
 		if reason, detail := services.ReasonOf(err); reason != "" {
 			opened.Reason = string(reason)
@@ -93,6 +108,15 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 		return nil, err
 	}
 	opened.Root = root
+	if statMtime >= 0 {
+		// Best-effort store; extraction already succeeded, so a cache
+		// failure must never fail the open.
+		_ = b.storage.PutCachedExtract(services.CachedExtract{
+			Path: cacheKey, Mtime: statMtime, Size: statSize,
+			Kind: opened.Kind, Title: opened.Title,
+			BlocksJSON: opened.BlocksJSON, PageCount: opened.PageCount,
+		})
+	}
 	return &opened, nil
 }
 

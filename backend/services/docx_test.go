@@ -27,7 +27,7 @@ func TestWriteAndReadDOCXRoundTrip(t *testing.T) {
 	if err != nil || info.Size() < 100 {
 		t.Fatalf("file missing or tiny: %v size=%v", err, info)
 	}
-	opened, err := openDocxFile(path)
+	opened, err := openDocxFile(path, "summary.docx")
 	if err != nil {
 		t.Fatal(err)
 	}

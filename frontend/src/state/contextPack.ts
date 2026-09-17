@@ -69,7 +69,7 @@ export interface ContextPackOpts {
  */
 export function buildContextPack(
   doc: Document | undefined,
-  selection?: { blockId: ID; text: string },
+  selection?: { blockId: ID; text: string; range?: { start: number; end: number } },
   opts: ContextPackOpts = {},
 ): string {
   const radius = opts.windowBlocks ?? DEFAULT_WINDOW;
@@ -79,7 +79,10 @@ export function buildContextPack(
   const parts: string[] = [];
   const sel = selection?.text?.trim();
   if (sel) {
-    parts.push("### Selection\n" + sel);
+    // Range offsets ride along when the selection sat in one block, so the
+    // model can scope edits to the exact span (issue 8).
+    const at = selection?.range ? ` (block ${selection.blockId}, chars ${selection.range.start}–${selection.range.end})` : "";
+    parts.push("### Selection" + at + "\n" + sel);
   }
 
   if (doc) {

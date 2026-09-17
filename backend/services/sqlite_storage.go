@@ -100,10 +100,23 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   FOREIGN KEY (thread_id) REFERENCES chat_threads(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON chat_messages(thread_id, created_at);
+CREATE TABLE IF NOT EXISTS extract_cache (
+  path          TEXT PRIMARY KEY,
+  mtime         INTEGER NOT NULL,
+  size          INTEGER NOT NULL,
+  kind          TEXT NOT NULL DEFAULT '',
+  title         TEXT NOT NULL DEFAULT '',
+  blocks_json   TEXT NOT NULL DEFAULT '',
+  page_count    INTEGER NOT NULL DEFAULT 1,
+  accessed_at   INTEGER NOT NULL
+);
 `
 	_, err := s.db.Exec(schema)
 	return err
 }
+
+// extractCacheCap bounds the cache on low-spec machines (issue 26).
+const extractCacheCap = 200
 
 func (s *SQLiteStorage) Put(key string, value any) error {
 	return s.SetSetting(key, fmt.Sprint(value))
@@ -396,6 +409,49 @@ func (s *SQLiteStorage) ListMessages(threadID string) ([]ChatMessageRecord, erro
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// GetCachedExtract returns the cached extraction when mtime+size still
+// match (issue 24). A hit also refreshes accessed_at for LRU eviction.
+func (s *SQLiteStorage) GetCachedExtract(path string, mtime, size int64) (*CachedExtract, error) {
+	var e CachedExtract
+	err := s.db.QueryRow(
+		`SELECT path, mtime, size, kind, title, blocks_json, page_count FROM extract_cache WHERE path = ?`, path,
+	).Scan(&e.Path, &e.Mtime, &e.Size, &e.Kind, &e.Title, &e.BlocksJSON, &e.PageCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if e.Mtime != mtime || e.Size != size {
+		return nil, nil // stale — file changed since extraction
+	}
+	_, _ = s.db.Exec(`UPDATE extract_cache SET accessed_at = ? WHERE path = ?`, time.Now().UnixMilli(), path)
+	return &e, nil
+}
+
+// PutCachedExtract stores an extraction and evicts least-recently-used rows
+// beyond the cap (issue 26).
+func (s *SQLiteStorage) PutCachedExtract(e CachedExtract) error {
+	now := time.Now().UnixMilli()
+	if _, err := s.db.Exec(
+		`INSERT INTO extract_cache(path, mtime, size, kind, title, blocks_json, page_count, accessed_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(path) DO UPDATE SET
+		   mtime = excluded.mtime, size = excluded.size, kind = excluded.kind,
+		   title = excluded.title, blocks_json = excluded.blocks_json,
+		   page_count = excluded.page_count, accessed_at = excluded.accessed_at`,
+		e.Path, e.Mtime, e.Size, e.Kind, e.Title, e.BlocksJSON, e.PageCount, now,
+	); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(
+		`DELETE FROM extract_cache WHERE path NOT IN (
+		   SELECT path FROM extract_cache ORDER BY accessed_at DESC LIMIT ?)`,
+		extractCacheCap,
+	)
+	return err
 }
 
 var _ StorageService = (*SQLiteStorage)(nil)

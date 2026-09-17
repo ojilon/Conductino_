@@ -182,6 +182,37 @@ export interface AIRequest {
   summaryContent?: string;
   /** Phase 5: primary summary document id for propose_summary_edit. */
   primarySummaryId?: ID;
+  /**
+   * Resolved `@doc` mentions: document ids named in the chat composer.
+   * The raw `@token` stays in `query`; these ids tell the harness exactly
+   * which documents were meant, so it never guesses. A mentioned summary
+   * overrides the workspace primary as the proposal target.
+   */
+  mentionIds?: ID[];
+  /**
+   * Focused pending proposal for chat-targeted revise ("shorten this
+   * proposal"): the change the user likely means. The model revises it by
+   * emitting a modify/delete proposal against the same block — never edits
+   * in place. Set from explicit opts, selection-overlap, or revise-intent
+   * wording over the target summary's most recent pending change.
+   */
+  focusedChange?: {
+    id: ID;
+    op: "insert" | "modify" | "delete";
+    blockId: ID;
+    oldContent?: string;
+    newContent?: string;
+  };
+}
+
+/** One AI-proposed summary edit. insert appends; modify/delete target a block. */
+export interface AIProposal {
+  op: "insert" | "modify" | "delete";
+  /** Target block in the summary (modify/delete; insert = insert after). */
+  targetBlockId?: ID;
+  oldContent?: string;
+  newContent: string;
+  highlightFragment?: string;
 }
 
 /** What a provider can produce back to the app. */
@@ -190,6 +221,8 @@ export interface AIResult {
   relatedSources?: { title: string; meta: string }[];
   insertion?: { text: string; citation: string };
   revision?: string;
+  /** Full proposal edits (insert/modify/delete). Legacy `insertion` maps to one insert. */
+  proposals?: AIProposal[];
 }
 
 export interface AIHandlers {
@@ -292,14 +325,16 @@ export interface DocumentMetadata {
 }
 
 /**
- * A highlight/annotation anchored to a block. (A future renderer
- * upgrade should carry precise character offsets; the UI already
- * distinguishes block-level from range-level annotations.)
+ * A highlight/annotation anchored to a block. `range` carries precise
+ * character offsets within the block's concatenated text (UTF-16, as the
+ * DOM reports) once renderers support it; block-anchored highlights leave
+ * it undefined and match the whole block.
  */
 export interface Highlight {
   id: ID;
   blockId: ID;
   text: string;
+  range?: { start: number; end: number };
   note?: string;
   createdAt: number;
 }
@@ -405,6 +440,14 @@ export interface TextSelection {
   documentId: ID;
   blockId: ID;
   text: string;
+  /**
+   * Precise offsets within the block's concatenated text (UTF-16, as the
+   * DOM reports). Set when the selection sits inside a single block;
+   * multi-block selections stay block-anchored (range undefined).
+   * This is the interim coordinate system until a PDF text layer lands
+   * (docs/document-rendering.md) — offsets, not pixels.
+   */
+  range?: { start: number; end: number };
   /** Viewport coordinates of the selection (for the floating toolbar). */
   x: number;
   y: number;

@@ -50,6 +50,16 @@ interface GoAIRequest {
   /** Phase 5 tools. */
   summaryContent?: string;
   primarySummaryId?: string;
+  /** Resolved @doc mentions (document ids). */
+  mentionIds?: string[];
+  /** Focused pending proposal for chat-targeted revise. */
+  focusedChange?: {
+    id: string;
+    op: "insert" | "modify" | "delete";
+    blockId: string;
+    oldContent?: string;
+    newContent?: string;
+  };
 }
 
 interface GoAIEvent {
@@ -175,6 +185,8 @@ class WailsAIProvider implements AIProvider {
         mode: request.mode,
         summaryContent: request.summaryContent,
         primarySummaryId: request.primarySummaryId,
+        mentionIds: request.mentionIds,
+        focusedChange: request.focusedChange,
         requestId,
       })
       .catch((e: unknown) =>

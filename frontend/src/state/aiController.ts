@@ -16,15 +16,16 @@ import { buildContextPack } from "./contextPack";
 import { getAIProvider } from "../services/ai";
 import { uid } from "../utils/helpers";
 import type { AIActivity, AIOperation, ChatMessage, ChatThread, ChatTurn, Document } from "../types/domain";
+import { resolveMentions } from "./mentions";
 
 export interface SelectionRef {
   documentId: string;
   blockId: string;
   text: string;
+  range?: { start: number; end: number };
 }
 
-/** Plain-text snapshot of a document for tool/context (Phase 5 summary tool). */
-function documentPlainText(doc: Document | undefined, maxChars = 8000): string {
+/** Plain-text snapshot of a document for tool/context (Phase 5 summary tool). */function documentPlainText(doc: Document | undefined, maxChars = 8000): string {
   if (!doc?.blocks?.length) return "";
   const parts: string[] = [];
   for (const b of doc.blocks) {
@@ -37,6 +38,16 @@ function documentPlainText(doc: Document | undefined, maxChars = 8000): string {
   let t = parts.join("\n\n").trim();
   if (t.length > maxChars) t = t.slice(0, maxChars - 20) + "\n…[truncated]";
   return t;
+}
+
+/** Fuzzy-match a quoted span to a summary block (proposal fallback). */
+function findBlockForSpan(doc: Document, span: string): string | undefined {
+  const needle = span.trim().slice(0, 160);
+  if (!needle) return undefined;
+  const probe = needle.length > 60 ? needle.slice(0, 60) : needle;
+  return doc.blocks.find((b) =>
+    b.segments.map((s) => s.text).join("").includes(probe),
+  )?.id;
 }
 
 export function useAIRunners() {
@@ -106,6 +117,7 @@ export function useAIRunners() {
       const contextPack = buildContextPack(doc, {
         blockId: selection.blockId,
         text: selection.text,
+        range: selection.range,
       });
       const id = start(operation, {
         documentId: selection.documentId,
@@ -194,6 +206,7 @@ export function useAIRunners() {
       const contextPack = buildContextPack(sourceDoc, {
         blockId: selection.blockId,
         text: selection.text,
+        range: selection.range,
       });
       cancels.current[id] = getAIProvider().run(
         {
@@ -350,7 +363,7 @@ export function useAIRunners() {
   );
 
   const runChat = useCallback(
-    (text: string, opts?: { documentId?: string; includeContext?: boolean }) => {
+    (text: string, opts?: { documentId?: string; includeContext?: boolean; selection?: SelectionRef; changeId?: string }) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
@@ -360,7 +373,43 @@ export function useAIRunners() {
       const documentId = doc?.id;
       const wsId = activeWorkspace(state)?.id ?? doc?.workspaceId;
       const threadId = ensureThread(documentId);
-      const summary = primarySummaryDocument(state);
+
+      // @doc resolution: tokens in the composer become explicit document ids
+      // so the harness never guesses. A mentioned summary becomes the
+      // proposal target, overriding the workspace primary.
+      const wsDocs = Object.values(state.documents).filter(
+        (d) => !wsId || !d.workspaceId || d.workspaceId === wsId,
+      );
+      const mentionIds = resolveMentions(trimmed, wsDocs, (d) => d.metadata.title);
+      const mentionedSummary = mentionIds
+        .map((id) => state.documents[id])
+        .find((d) => d?.kind === "summary");
+      const summary = mentionedSummary ?? primarySummaryDocument(state);
+
+      // Region anchor rides along: explicit opt wins, else the live text
+      // selection (same document) — "@doc + selected span" needs no guessing.
+      const liveSel = state.selection && state.selection.documentId === documentId
+        ? { documentId: state.selection.documentId, blockId: state.selection.blockId, text: state.selection.text }
+        : undefined;
+      const sel = opts?.selection ?? liveSel;
+
+      // Focused pending proposal for chat-targeted revise ("shorten this
+      // proposal"): explicit changeId wins; else the pending change on the
+      // selected block; else revise-intent wording falls back to the target
+      // summary's most recent pending change. Heuristic by design — the
+      // model is told to touch it only when the user asks.
+      const pendingInSummary = summary
+        ? Object.values(state.changes)
+            .filter((c) => c.documentId === summary.id && c.status === "pending")
+            .sort((a, b) => b.createdAt - a.createdAt)
+        : [];
+      const focused = opts?.changeId
+        ? state.changes[opts.changeId]
+        : sel?.blockId
+          ? pendingInSummary.find((c) => c.blockId === sel.blockId)
+          : undefined;
+      const reviseIntent = /\b(revise|shorten|expand|extend|rewrite|reword|rephrase|narrow|broaden|improve|change|edit|fix|update|lengthen)\b[^.?!]{0,40}\b(this|that|it|proposal|proposed|edit|change|draft|insertion|deletion|revision)\b|\b(this|that)\s+(proposal|proposed|edit|change|draft|insertion|deletion|revision)\b/i.test(trimmed);
+      const focusedChange = focused ?? (reviseIntent ? pendingInSummary[0] : undefined);
 
       const userMsg: ChatMessage = {
         id: uid("msg"),
@@ -395,12 +444,23 @@ export function useAIRunners() {
           query: trimmed,
           documentId,
           workspaceId: wsId,
+          selection: sel ? { blockId: sel.blockId, text: sel.text } : undefined,
           includeDocumentContext: !!contextPack,
           contextPack: contextPack || undefined,
           messageHistory: prior,
           mode: "chat",
           summaryContent: documentPlainText(summary) || undefined,
           primarySummaryId: summary?.id,
+          mentionIds: mentionIds.length ? mentionIds : undefined,
+          focusedChange: focusedChange
+            ? {
+                id: focusedChange.id,
+                op: focusedChange.type,
+                blockId: focusedChange.blockId,
+                oldContent: focusedChange.oldContent || undefined,
+                newContent: focusedChange.newContent || undefined,
+              }
+            : undefined,
         },
         {
           onPhase: (_i, label) =>
@@ -419,38 +479,89 @@ export function useAIRunners() {
             };
             dispatch({ type: "chat.append", threadId, message: assistantMsg });
 
-            // Phase 5: propose_summary_edit → DocumentChange (user still must accept).
+            // Phase 5: proposals → DocumentChanges (user still must accept).
+            // Full edit power, not append-only: insert adds, modify rewrites
+            // a block, delete strikes it. Legacy single `insertion` maps to
+            // one insert for backward compat with older backends.
+            const proposals = result.proposals?.length
+              ? result.proposals
+              : result.insertion?.text?.trim()
+                ? [{ op: "insert" as const, newContent: `${result.insertion.text} ${result.insertion.citation ?? "(AI draft)"}` }]
+                : [];
             let changeIds: string[] = [];
-            if (result.insertion?.text?.trim() && summary) {
-              const changeId = uid("chg");
-              const blockId = uid("s-ai");
-              const insertText = `${result.insertion.text} ${result.insertion.citation ?? "(AI draft)"}`;
-              dispatch({
-                type: "change.propose",
-                change: {
-                  id: changeId,
-                  documentId: summary.id,
-                  workspaceId: wsId,
-                  type: "insert",
-                  blockId,
-                  oldContent: "",
-                  newContent: insertText,
-                  sourceId: doc?.sourceId ?? summary.sourceId,
-                  activityId: id,
-                  status: "pending",
-                  createdAt: Date.now(),
-                },
-                block: {
-                  id: blockId,
-                  type: "paragraph",
-                  changeId,
-                  segments: [{ text: insertText }],
-                },
-              });
-              changeIds = [changeId];
+            for (const p of proposals) {
+              if (!summary || !p.newContent?.trim()) continue;
+              if (p.op === "modify" || p.op === "delete") {
+                // Anchor to the named block; fall back to fuzzy-matching the
+                // old span when the model returned text but no block id.
+                const targetId = p.targetBlockId && summary.blocks.some((b) => b.id === p.targetBlockId)
+                  ? p.targetBlockId
+                  : findBlockForSpan(summary, p.oldContent ?? p.highlightFragment ?? "");
+                if (!targetId) continue;
+                const target = summary.blocks.find((b) => b.id === targetId);
+                const oldText = p.oldContent?.trim()
+                  || target?.segments.map((s) => s.text).join("") || "";
+                const cid = uid("chg");
+                dispatch({
+                  type: "change.propose",
+                  change: {
+                    id: cid,
+                    documentId: summary.id,
+                    workspaceId: wsId,
+                    type: p.op,
+                    blockId: targetId,
+                    oldContent: oldText,
+                    newContent: p.op === "delete" ? "" : p.newContent,
+                    highlightFragment: p.highlightFragment,
+                    sourceId: doc?.sourceId ?? summary.sourceId,
+                    activityId: id,
+                    status: "pending",
+                    createdAt: Date.now(),
+                  },
+                });
+                changeIds = [...changeIds, cid];
+                // Supersede: an older pending modify/delete on the same block
+                // is now stale (the pending map renders one per block). Reject
+                // flips status only — committed blocks are untouched — so the
+                // user still sees the full audit trail.
+                for (const stale of pendingInSummary) {
+                  if (stale.id !== cid && stale.blockId === targetId && stale.type !== "insert") {
+                    dispatch({ type: "change.decide", id: stale.id, status: "rejected" });
+                  }
+                }
+              } else {
+                const changeId = uid("chg");
+                const blockId = p.targetBlockId && !summary.blocks.some((b) => b.id === p.targetBlockId)
+                  ? p.targetBlockId : uid("s-ai");
+                dispatch({
+                  type: "change.propose",
+                  change: {
+                    id: changeId,
+                    documentId: summary.id,
+                    workspaceId: wsId,
+                    type: "insert",
+                    blockId,
+                    oldContent: "",
+                    newContent: p.newContent,
+                    sourceId: doc?.sourceId ?? summary.sourceId,
+                    activityId: id,
+                    status: "pending",
+                    createdAt: Date.now(),
+                  },
+                  block: {
+                    id: blockId,
+                    type: "paragraph",
+                    changeId,
+                    segments: [{ text: p.newContent }],
+                  },
+                });
+                changeIds = [...changeIds, changeId];
+              }
+            }
+            if (changeIds.length) {
               dispatch({
                 type: "toast",
-                message: "Chat proposed a summary edit — review it on the summary tab",
+                message: "Chat proposed summary edits — review them on the summary tab",
               });
             }
 

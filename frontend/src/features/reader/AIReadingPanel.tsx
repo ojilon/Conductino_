@@ -85,6 +85,35 @@ function ChatFace({ doc }: { doc: Document }) {
     Object.values(state.chat.byId).find((t) => t.workspaceId === wsId) ||
     null;
 
+  // @doc autocomplete: token after the last "@" before the cursor filters
+  // workspace documents by title; picking one splices the full title in.
+  // Send-time resolution (resolveMentions) is the ground truth — this list
+  // is just a typing aid so tokens match real documents.
+  const [cursor, setCursor] = useState(0);
+  const atToken = (() => {
+    const before = draft.slice(0, cursor);
+    const m = /@([\p{L}\p{N}._-]*)$/u.exec(before);
+    return m ? m[1] : null;
+  })();
+  const candidates = (() => {
+    if (atToken === null) return [];
+    const docs = Object.values(state.documents).filter(
+      (d) => !d.workspaceId || d.workspaceId === wsId,
+    );
+    const needle = atToken.toLowerCase();
+    return docs
+      .filter((d) => !needle || d.metadata.title.toLowerCase().includes(needle))
+      .slice(0, 6);
+  })();
+  const completeMention = (title: string) => {
+    const before = draft.slice(0, cursor);
+    const after = draft.slice(cursor);
+    const replaced = before.replace(/@[\p{L}\p{N}._-]*$/u, `@${title} `);
+    const next = replaced + after;
+    setDraft(next);
+    setCursor(replaced.length);
+  };
+
   useEffect(() => {
     ensureThread(doc.id);
   }, [doc.id, ensureThread]);
@@ -113,7 +142,7 @@ function ChatFace({ doc }: { doc: Document }) {
           <EmptyState
             icon="sparkles"
             title="Chat about this document"
-            hint="Ask follow-ups, request clarifications, or brainstorm claims. Context from the open document is attached automatically."
+            hint="Ask follow-ups, request clarifications, or brainstorm claims. Context from the open document is attached automatically. Type @ to target a document; select text to anchor a region."
           />
         ) : (
           thread.messages.map((m) => (
@@ -142,10 +171,30 @@ function ChatFace({ doc }: { doc: Document }) {
       </div>
 
       <div className="border-t border-line-soft px-3 py-2.5">
+        {candidates.length > 0 && (
+          <div className="mb-1.5 overflow-hidden rounded-lg border border-line-soft bg-white shadow-sm">
+            {candidates.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => completeMention(d.metadata.title)}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-ink-700 hover:bg-iris-50"
+              >
+                <span className="font-semibold text-iris-600">@</span>
+                <span className="min-w-0 flex-1 truncate">{d.metadata.title}</span>
+                <span className="shrink-0 text-[10.5px] text-mute">{d.kind}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setCursor(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -153,7 +202,7 @@ function ChatFace({ doc }: { doc: Document }) {
               }
             }}
             rows={2}
-            placeholder="Ask about the document…"
+            placeholder="Ask about the document… (@title to target a doc)"
             className="min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-cream-50 px-3 py-2 text-[12.5px] text-ink-800 outline-none focus:border-iris-300"
             disabled={!!runningChat}
           />

@@ -60,7 +60,7 @@ func (e errString) Error() string { return string(e) }
 
 type fakeDocs struct{}
 
-func (fakeDocs) OpenFile(absPath string) (models.OpenedDocument, error) {
+func (fakeDocs) OpenFile(absPath, relKey string) (models.OpenedDocument, error) {
 	return models.OpenedDocument{
 		Title:      "a",
 		BlocksJSON: `{"blocks":[{"id":"1","type":"paragraph","segments":[{"text":"hello tool"}]}]}`,
@@ -87,7 +87,45 @@ func TestListWorkspace(t *testing.T) {
 func TestProposeSummaryEdit(t *testing.T) {
 	h := &ToolHost{}
 	r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"text": "ATP is driven by proton motive force."})
-	if !r.OK || h.LastProposal() == "" {
+	if !r.OK || h.LastProposal().NewText == "" {
 		t.Fatalf("propose: %+v", r)
+	}
+	if got := h.LastProposal().Op; got != "insert" {
+		t.Fatalf("default op = %q, want insert", got)
+	}
+}
+
+func TestSearchWorkspace(t *testing.T) {
+	h := &ToolHost{FS: &fakeFS{root: "/tmp/ws"}, Docs: fakeDocs{}}
+	r := h.Dispatch(ToolSearchWorkspace, map[string]string{"query": "hello"})
+	if !r.OK || !strings.Contains(r.Content, "a.txt") {
+		t.Fatalf("search hit: %+v", r)
+	}
+	r = h.Dispatch(ToolSearchWorkspace, map[string]string{"query": "zzz-no-such-word"})
+	if !r.OK || !strings.Contains(r.Content, "no matches") {
+		t.Fatalf("search miss: %+v", r)
+	}
+	if r := h.Dispatch(ToolSearchWorkspace, map[string]string{"query": "  "}); r.OK {
+		t.Fatalf("empty query should fail: %+v", r)
+	}
+}
+
+func TestProposeSummaryEditOps(t *testing.T) {	h := &ToolHost{}
+	// modify without a target must fail (the UI could never anchor it).
+	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "modify", "text": "new"}); r.OK {
+		t.Fatalf("modify without target should fail: %+v", r)
+	}
+	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{
+		"op": "modify", "target": "b1", "text": "better definition",
+	}); !r.OK || h.LastProposal().Op != "modify" {
+		t.Fatalf("modify: %+v", r)
+	}
+	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{
+		"op": "delete", "target": "b2",
+	}); !r.OK || h.LastProposal().Op != "delete" {
+		t.Fatalf("delete: %+v", r)
+	}
+	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "rename", "text": "x"}); r.OK {
+		t.Fatalf("unknown op should fail: %+v", r)
 	}
 }

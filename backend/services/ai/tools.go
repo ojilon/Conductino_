@@ -16,6 +16,7 @@ const (
 	ToolReadSource          = "read_source"
 	ToolReadSummary         = "read_summary"
 	ToolProposeSummaryEdit  = "propose_summary_edit"
+	ToolSearchWorkspace     = "search_in_workspace"
 )
 
 // Allowed source extensions for read_source (lowercase, no dot).
@@ -32,9 +33,10 @@ type PathResolver interface {
 }
 
 // FileOpener extracts displayable content from an absolute path already
-// Resolve-checked by the host.
+// Resolve-checked by the host. relKey seeds stable block IDs (see
+// services/blockids.go); pass the workspace-relative token.
 type FileOpener interface {
-	OpenFile(absPath string) (models.OpenedDocument, error)
+	OpenFile(absPath, relKey string) (models.OpenedDocument, error)
 }
 
 // ToolHost holds per-request deps for folder-scoped tools.
@@ -43,7 +45,18 @@ type ToolHost struct {
 	Docs               FileOpener
 	SummaryText        string // snapshot from frontend (Phase 6 → storage)
 	PrimarySummaryID   string
-	lastProposalText   string // set by propose_summary_edit for final payload
+	lastProposal       proposal // set by propose_summary_edit for final payload
+}
+
+// proposal is one structured summary edit: full rewrite power, not
+// append-only. insert adds a paragraph; modify rewrites the target span;
+// delete strikes it. The user gatekeeps every one in the UI.
+type proposal struct {
+	Op          string // insert | modify | delete
+	Target      string // block id or quoted span in the summary (modify/delete)
+	OldText     string // span being replaced/removed (modify/delete fallback)
+	NewText     string
+	Highlight   string // exact substring the UI underlines (modify)
 }
 
 // ToolResult is what the model sees after a tool runs.
@@ -61,12 +74,21 @@ You may call at most two tools before answering. Use ONLY this XML form on its o
 <tool name="list_workspace"/>
 <tool name="read_source" path="relative/path.txt"/>
 <tool name="read_summary"/>
-<tool name="propose_summary_edit" text="1-2 factual sentences to insert into the research summary"/>
+<tool name="propose_summary_edit" op="insert" text="1-2 factual sentences"/>
+<tool name="propose_summary_edit" op="modify" target="block id or quoted span" text="replacement text"/>
+<tool name="propose_summary_edit" op="delete" target="block id or quoted span"/>
+<tool name="search_in_workspace" query="keyword"/>
 
 Rules:
 - Paths are relative to the open research folder. Never use absolute paths or "..".
 - read_source is limited to .txt/.md. If unsupported, say so.
-- propose_summary_edit drafts an insertion for the user to accept; it does not write files.
+- Prefer search_in_workspace over guessing file contents when the user asks
+  "where", "which file", or "find" — it returns quoted snippets, never full dumps.
+- The summary is a living document: harmonize new material with what is already
+  there — redefine a stale definition, restructure a section, or remove what a
+  new source disproves. Never restrict yourself to appending.
+- Every propose_summary_edit drafts exactly one change for the user to accept;
+  it does not write files. For modify/delete, name the target span precisely.
 - After tool results appear, give a normal answer (no further tool tags unless needed).
 `)
 }
@@ -122,7 +144,9 @@ func (h *ToolHost) Dispatch(name string, args map[string]string) ToolResult {
 	case ToolReadSummary:
 		return h.readSummary()
 	case ToolProposeSummaryEdit:
-		return h.proposeSummaryEdit(args["text"])
+		return h.proposeSummaryEdit(args["text"], args["op"], args["target"], args["oldtext"])
+	case ToolSearchWorkspace:
+		return h.searchWorkspace(args["query"])
 	default:
 		return ToolResult{Name: name, OK: false, Content: fmt.Sprintf("unknown tool %q", name)}
 	}
@@ -188,7 +212,7 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 	if err != nil {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: "path outside workspace or invalid"}
 	}
-	opened, err := h.Docs.OpenFile(abs)
+	opened, err := h.Docs.OpenFile(abs, rel)
 	if err != nil {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: "could not read file"}
 	}
@@ -229,31 +253,177 @@ func (h *ToolHost) readSummary() ToolResult {
 	}
 }
 
-func (h *ToolHost) proposeSummaryEdit(text string) ToolResult {
-	text = strings.TrimSpace(text)
-	if text == "" {
+// Search caps: bounded work on a low-spec machine, bounded prompt text.
+const (
+	searchMaxFiles   = 60
+	searchMaxMatches = 12
+	searchSnippetRad = 80
+	searchMaxOut     = 4000
+)
+
+// searchWorkspace is keyword search over readable workspace files. Every
+// path goes through Resolve (root jail); only read_source-readable
+// extensions are scanned; results are quoted snippets, never full dumps.
+func (h *ToolHost) searchWorkspace(query string) ToolResult {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "query required"}
+	}
+	if h.FS == nil || h.Docs == nil {
+		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "filesystem not available"}
+	}
+	root, err := h.FS.ListRoot()
+	if err != nil || root == nil {
+		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "could not list workspace"}
+	}
+	var paths []string
+	var walk func(n *models.FileTreeNode)
+	walk = func(n *models.FileTreeNode) {
+		if n == nil || len(paths) >= searchMaxFiles {
+			return
+		}
+		if n.Kind != "folder" {
+			rel := n.Path
+			if rel == "" {
+				rel = n.Label
+			}
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(rel), "."))
+			if allowedReadExt[ext] && !filepath.IsAbs(rel) && !strings.Contains(rel, "..") {
+				paths = append(paths, rel)
+			}
+		}
+		for i := range n.Children {
+			walk(&n.Children[i])
+		}
+	}
+	walk(root)
+
+	needle := strings.ToLower(query)
+	var lines []string
+	scanned := 0
+	for _, rel := range paths {
+		if len(lines) >= searchMaxMatches {
+			break
+		}
+		abs, err := h.FS.Resolve(rel)
+		if err != nil {
+			continue // jail rejection — skip silently, don't leak the path
+		}
+		opened, err := h.Docs.OpenFile(abs, rel)
+		if err != nil || opened.Reason != "" {
+			continue
+		}
+		scanned++
+		for _, para := range blocksToParagraphs(opened.BlocksJSON) {
+			if len(lines) >= searchMaxMatches {
+				break
+			}
+			idx := strings.Index(strings.ToLower(para), needle)
+			if idx < 0 {
+				continue
+			}
+			start := max(0, idx-searchSnippetRad)
+			end := min(len(para), idx+len(query)+searchSnippetRad)
+			snip := strings.TrimSpace(para[start:end])
+			lines = append(lines, fmt.Sprintf("- %s — “…%s…\"", rel, snip))
+		}
+	}
+	var b strings.Builder
+	if len(lines) == 0 {
+		fmt.Fprintf(&b, "Search %q — no matches (%d file(s) scanned).", query, scanned)
+	} else {
+		fmt.Fprintf(&b, "Search %q — %d match(es) in %d file(s) scanned:\n%s",
+			query, len(lines), scanned, strings.Join(lines, "\n"))
+	}
+	out := b.String()
+	if len(out) > searchMaxOut {
+		out = out[:searchMaxOut-20] + "\n…[truncated]"
+	}
+	return ToolResult{Name: ToolSearchWorkspace, OK: true, Content: out}
+}
+
+// blocksToParagraphs decodes BlocksJSON to per-block plain text (one entry
+// per paragraph block; headings/lists flattened the same way).
+func blocksToParagraphs(blocksJSON string) []string {
+	if strings.TrimSpace(blocksJSON) == "" {
+		return nil
+	}
+	var wrap struct {
+		Blocks []struct {
+			Segments []struct {
+				Text string `json:"text"`
+			} `json:"segments"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(blocksJSON), &wrap); err != nil {
+		return nil
+	}
+	var out []string
+	for _, bl := range wrap.Blocks {
+		var sb strings.Builder
+		for _, s := range bl.Segments {
+			sb.WriteString(s.Text)
+		}
+		if t := strings.TrimSpace(sb.String()); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (h *ToolHost) proposeSummaryEdit(text, op, target, oldText string) ToolResult {	text = strings.TrimSpace(text)
+	op = strings.ToLower(strings.TrimSpace(op))
+	if op == "" {
+		op = "insert"
+	}
+	if op != "insert" && op != "modify" && op != "delete" {
+		return ToolResult{Name: ToolProposeSummaryEdit, OK: false, Content: `op must be insert, modify, or delete`}
+	}
+	target = strings.TrimSpace(target)
+	oldText = strings.TrimSpace(oldText)
+	if op != "insert" && target == "" && oldText == "" {
+		return ToolResult{Name: ToolProposeSummaryEdit, OK: false, Content: "modify/delete need a target block id or quoted span"}
+	}
+	if op != "delete" && text == "" {
 		return ToolResult{Name: ToolProposeSummaryEdit, OK: false, Content: "text required for proposal"}
 	}
 	if len(text) > 2000 {
 		text = text[:2000]
 	}
-	h.lastProposalText = text
+	highlight := ""
+	if op == "modify" && oldText != "" && strings.Contains(text, oldText[:min(24, len(oldText))]) {
+		highlight = oldText
+	}
+	h.lastProposal = proposal{Op: op, Target: target, OldText: oldText, NewText: text, Highlight: highlight}
+	verb := map[string]string{"insert": "insertion", "modify": "revision", "delete": "deletion"}[op]
 	return ToolResult{
 		Name: ToolProposeSummaryEdit,
 		OK:   true,
 		Content: fmt.Sprintf(
-			"Queued summary insertion proposal (user must accept in UI):\n%s\nCitation: (AI draft)",
-			text,
+			"Queued summary %s proposal (user must accept in UI):\n%s\nCitation: (AI draft)",
+			verb, text,
 		),
 	}
 }
 
-// LastProposal returns text from the latest successful propose_summary_edit.
-func (h *ToolHost) LastProposal() string {
+// LastProposal returns the latest successful propose_summary_edit.
+func (h *ToolHost) LastProposal() proposal {
 	if h == nil {
-		return ""
+		return proposal{}
 	}
-	return h.lastProposalText
+	return h.lastProposal
+}
+
+// LastProposalText is the legacy text-only accessor (insert path).
+func (h *ToolHost) LastProposalText() string {
+	return h.LastProposal().NewText
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // blocksJSONToPlain extracts segment text from OpenedDocument.BlocksJSON.

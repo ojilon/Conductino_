@@ -54,6 +54,24 @@ export function BlockText({ block, docId }: { block: DocumentBlock; docId: strin
     );
   }
 
+  // Range-precise highlight (issue 8): a saved note with offsets underlines
+  // exactly the span. Single-segment blocks split cleanly; multi-segment
+  // blocks keep the whole-block treatment below (no style loss).
+  const full = block.segments.map((s) => s.text).join("");
+  const ranged = doc?.highlights.find(
+    (h) => h.blockId === block.id && h.range && h.range.end > h.range.start,
+  );
+  const r = ranged?.range;
+  if (r && block.segments.length === 1 && r.end <= full.length) {
+    return (
+      <p className="my-4 doc-body">
+        {full.slice(0, r.start)}
+        <mark className="rounded-[3px] bg-moss-100 px-0.5 text-moss-700">{full.slice(r.start, r.end)}</mark>
+        {full.slice(r.end)}
+      </p>
+    );
+  }
+
   return (
     <p className={cn("my-4 doc-body", noted && "underline decoration-hay-300 decoration-[3px] underline-offset-[6px]")}>
       {block.segments.map((s, i) =>
@@ -83,7 +101,7 @@ export function SelectionToolbar({ doc }: { doc: Document }) {
   const sel = state.selection;
   if (!sel || sel.documentId !== doc.id) return null;
 
-  const asRef = (): SelectionRef => ({ documentId: sel.documentId, blockId: sel.blockId, text: sel.text });
+  const asRef = (): SelectionRef => ({ documentId: sel.documentId, blockId: sel.blockId, text: sel.text, range: sel.range });
   const x = clamp(sel.x, 200, window.innerWidth - 200);
   const y = Math.max(70, sel.y - 16);
 
@@ -127,7 +145,7 @@ export function SelectionToolbar({ doc }: { doc: Document }) {
           dispatch({
             type: "doc.highlight.add",
             documentId: doc.id,
-            highlight: { id: uid("hl"), blockId: sel.blockId, text: sel.text, note: "Saved from selection", createdAt: Date.now() },
+            highlight: { id: uid("hl"), blockId: sel.blockId, text: sel.text, range: sel.range, note: "Saved from selection", createdAt: Date.now() },
           });
           dispatch({ type: "selection.set", selection: null });
           dispatch({ type: "toast", message: "Note saved to this document" });
@@ -203,14 +221,37 @@ export default function SourceDocumentView({ doc }: { doc: Document }) {
       dispatch({ type: "selection.set", selection: null });
       return;
     }
-    const rect = sel?.getRangeAt(0).getBoundingClientRect();
+    const domRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    const rect = domRange?.getBoundingClientRect();
     if (!rect) return;
+    // Range offsets within the block (issue 8): measure by cloning a range
+    // over the block contents and ending it at the selection start. Only
+    // when the whole selection sits inside this block element; otherwise
+    // stay block-anchored (range undefined).
+    let range: { start: number; end: number } | undefined;
+    if (domRange) {
+      try {
+        const inside = (n: Node | null) => !!n && (blockEl === n || blockEl.contains(n));
+        if (inside(domRange.startContainer) && inside(domRange.endContainer)) {
+          const pre = domRange.cloneRange();
+          pre.selectNodeContents(blockEl);
+          pre.setEnd(domRange.startContainer, domRange.startOffset);
+          const start = pre.toString().length;
+          const full = blockEl.textContent?.length ?? 0;
+          const end = Math.min(full, start + domRange.toString().length);
+          if (end > start) range = { start, end };
+        }
+      } catch {
+        range = undefined; // measuring must never break selection
+      }
+    }
     dispatch({
       type: "selection.set",
       selection: {
         documentId: doc.id,
         blockId: blockEl.getAttribute("data-block-id") as string,
         text,
+        range,
         x: rect.left + rect.width / 2,
         y: rect.top,
       },

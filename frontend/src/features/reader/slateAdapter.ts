@@ -18,6 +18,12 @@ export type SlateText = {
   em?: boolean;
   strong?: boolean;
   highlightId?: ID;
+  /**
+   * Transient decoration only (never persisted via fromSlate — decorations
+   * are computed, not stored): marks the span a pending modify targets.
+   * Clicking it focuses the change for inline accept/reject/revise.
+   */
+  pendingChangeId?: ID;
 };
 
 /** Slate element — one per DocumentBlock. */

@@ -30,13 +30,14 @@ navigation, tabs — works on the model and survives a renderer swap.
   same block mapping but with plain-text `contentEditable` blocks
   (BASIC WORKING IMPLEMENTATION — no rich formatting, no Slate) and the
   pending-change treatments (inserted card / modified underline).
-- Extraction is split by type. `.txt`/`.md` are REAL in the desktop build:
-  click → `App.OpenFile(path)` → `Filesystem.Resolve` (workspace containment)
-  → `Documents.OpenFile` extension dispatch → `openTextFile` (`os.ReadFile`,
-  2 MiB / 1000-block caps, `encoding/json`-marshalled blocks) → new tab with
-  genuine paragraphs (`backend/services/documents.go`). Everything else
-  returns `ErrUnsupportedType` and the UI falls back to the mock factory
-  (`makeDocumentFromSource` in `src/mock/data.ts`, `(mock extraction)` toast).
+- Extraction is split by type. `.txt`/`.md`/`.docx` are REAL in the desktop build:
+  click → `App.OpenFile(path)` → extract-cache lookup (root-anchored path +
+  mtime + size; 200-entry LRU) → miss → `Filesystem.Resolve` (workspace containment)
+  → `Documents.OpenFile` extension dispatch → `openTextFile` (Stat-gated,
+  `LimitReader`-bounded) / stdlib OOXML → `encoding/json`-marshalled blocks
+  with **stable content-addressed IDs** → new tab with genuine paragraphs
+  (`backend/services/documents.go`, `blockids.go`). Everything else
+  returns `ErrUnsupportedType` with a typed `reason` value (no mock fallback).
   `DocumentService.Extract` (abstract-wrapped stub) is superseded by
   `OpenFile` and has zero callers.
 
@@ -61,14 +62,20 @@ scroll container, `data-block-id` anchors for selection mapping) stays.
 
 ## Selection & highlights during the upgrade
 
-- Current precision: block-level. `TextSelection { blockId, text }` and
-  `Highlight { blockId, text }` already separate *what was selected* from
-  *where it lives*.
-- Target: add `range: { start, end }` (or pdf.js text-layer coordinates)
-  to `TextSelection`/`Highlight`. UI code that reads them is already
-  isolated in `DocumentView.tsx` + the `doc.highlight.add` action.
-- Existing highlights/notes remain valid: they are block-anchored until
-  ranges are available.
+- Current precision: block-level anchors + **range offsets** (`TextSelection.range`
+  / `Highlight.range`: UTF-16 offsets in the block's concatenated text, measured
+  from the native DOM Range when the selection sits in one block; multi-block
+  stays block-anchored). Saved notes with ranges underline exactly the span.
+- Block IDs are **content-addressed and stable** (`b-<hash>` over path + type +
+  text + occurrence) — reopening an unchanged file yields identical IDs, so
+  highlights, pending changes, and chat anchors survive. Edited blocks get new
+  IDs, correctly orphaning stale anchors.
+- Pending summary modifies render as **inline Slate decorations** (click the
+  underlined span for accept/reject/revise); deletes/inserts stay card-based.
+- Next: pdf.js text-layer coordinates for PDF pages (block offsets are the
+  interim system); range-precise `doc.highlight.add` already isolates the UI
+  code in `DocumentView.tsx`.
+- Existing highlights/notes remain valid: range-less entries match the whole block.
 
 ## What stays untouched when you swap renderers
 

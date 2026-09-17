@@ -40,6 +40,25 @@ type StorageService interface {
 	GetThread(id string) (*ChatThreadRecord, error)
 	ListThreads(workspaceID string) ([]ChatThreadRecord, error)
 	ListMessages(threadID string) ([]ChatMessageRecord, error)
+
+	// Extract cache (issues 24+26): file extraction results keyed by
+	// root-anchored path + mtime + size, so reopening an unchanged file
+	// never re-extracts. Bounded (LRU-ish eviction inside the impls).
+	GetCachedExtract(path string, mtime, size int64) (*CachedExtract, error)
+	PutCachedExtract(e CachedExtract) error
+}
+
+// CachedExtract is one extraction result for a workspace file. Path is the
+// root-anchored key (root + rel token), so the same relative file under a
+// different folder never collides.
+type CachedExtract struct {
+	Path       string `json:"path"`
+	Mtime      int64  `json:"mtime"`
+	Size       int64  `json:"size"`
+	Kind       string `json:"kind,omitempty"`
+	Title      string `json:"title,omitempty"`
+	BlocksJSON string `json:"blocksJson,omitempty"`
+	PageCount  int    `json:"pageCount,omitempty"`
 }
 
 type WorkspaceRecord struct {
@@ -118,6 +137,7 @@ type InMemoryStorage struct {
 	changes    map[string]ChangeRecord
 	threads    map[string]ChatThreadRecord
 	messages   map[string][]ChatMessageRecord // threadID -> msgs
+	extracts   map[string]CachedExtract       // cacheKey -> extract
 }
 
 func NewStorage() *InMemoryStorage {
@@ -129,6 +149,7 @@ func NewStorage() *InMemoryStorage {
 		changes:    make(map[string]ChangeRecord),
 		threads:    make(map[string]ChatThreadRecord),
 		messages:   make(map[string][]ChatMessageRecord),
+		extracts:   make(map[string]CachedExtract),
 	}
 }
 
@@ -302,6 +323,33 @@ func (s *InMemoryStorage) ListMessages(threadID string) ([]ChatMessageRecord, er
 	out := make([]ChatMessageRecord, len(msgs))
 	copy(out, msgs)
 	return out, nil
+}
+
+// inMemoryExtractCap mirrors the SQLite cap for test parity.
+const inMemoryExtractCap = 200
+
+func (s *InMemoryStorage) GetCachedExtract(path string, mtime, size int64) (*CachedExtract, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.extracts[path]
+	if !ok || e.Mtime != mtime || e.Size != size {
+		return nil, nil
+	}
+	c := e
+	return &c, nil
+}
+
+func (s *InMemoryStorage) PutCachedExtract(e CachedExtract) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.extracts[e.Path]; !ok && len(s.extracts) >= inMemoryExtractCap {
+		for k := range s.extracts {
+			delete(s.extracts, k) // arbitrary oldest stand-in; SQLite uses LRU
+			break
+		}
+	}
+	s.extracts[e.Path] = e
+	return nil
 }
 
 /* ------------------------------------------------------------------ */

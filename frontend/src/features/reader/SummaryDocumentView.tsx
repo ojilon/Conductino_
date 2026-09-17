@@ -9,12 +9,15 @@
  * Phase 8: Save DOCX writes blocks to summaries/*.docx under the workspace.
  */
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   createEditor,
   type Descendant,
   type BaseEditor,
   Editor,
+  Node,
+  Range as SlateRange,
+  type NodeEntry,
 } from "slate";
 import {
   Slate,
@@ -26,6 +29,7 @@ import {
 } from "slate-react";
 import { withHistory, type HistoryEditor } from "slate-history";
 import { useApp, pendingChangesFor } from "../../state/appState";
+import { useAIRunners } from "../../state/aiController";
 import { writeSummaryDOCX } from "../../services/backend";
 import type { Document, DocumentBlock, DocumentChange, ID } from "../../types/domain";
 import { Icon } from "../../components/icons";
@@ -45,23 +49,6 @@ declare module "slate" {
     Element: ConductinoSlateElement;
     Text: ConductinoSlateText;
   }
-}
-
-function ModifiedText({ full, fragment }: { full: string; fragment?: string }) {
-  let body: ReactNode = full;
-  if (fragment && full.includes(fragment)) {
-    const idx = full.indexOf(fragment);
-    body = (
-      <>
-        {full.slice(0, idx)}
-        <span className="rounded-[3px] bg-hay-100 px-0.5 underline decoration-hay-300 decoration-2 underline-offset-4">
-          {fragment}
-        </span>
-        {full.slice(idx + fragment.length)}
-      </>
-    );
-  }
-  return <p className="my-4 doc-body">{body}</p>;
 }
 
 function InsertCard({ change, sourceTitle }: { change: DocumentChange; sourceTitle: string }) {
@@ -155,18 +142,33 @@ function Leaf({ attributes, children, leaf }: RenderLeafProps) {
   return <span {...attributes}>{node}</span>;
 }
 
+/** Locate a fragment inside element text (first occurrence). */
+function fragmentRange(text: string, fragment: string): { start: number; end: number } | null {
+  const frag = fragment.trim();
+  if (!frag) return null;
+  const idx = text.indexOf(frag.length > 120 ? frag.slice(0, 120) : frag);
+  if (idx < 0) return null;
+  return { start: idx, end: idx + Math.min(frag.length, 120) };
+}
+
 function SummarySlateEditor({
   docId,
   blocks,
+  modifies,
   externalKey,
 }: {
   docId: ID;
   blocks: DocumentBlock[];
+  /** Pending modify changes by block id — rendered as inline decorations. */
+  modifies: Map<ID, DocumentChange>;
   externalKey: string;
 }) {
   const { dispatch } = useApp();
+  const { runRevise } = useAIRunners();
   const editor = useMemo(() => withHistory(withReact(createEditor())), [externalKey]);
   const initial = useMemo(() => toSlate(blocks), [externalKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [focusId, setFocusId] = useState<ID | null>(null);
+  const focused = (focusId && modifies.get(focusId)) || null;
 
   const onChange = useCallback(
     (next: Descendant[]) => {
@@ -184,34 +186,133 @@ function SummarySlateEditor({
     [blocks, dispatch, docId],
   );
 
+  // Inline pending-modify decorations (issue 28): the targeted span inside
+  // the committed block gets a pendingChangeId mark instead of a separate
+  // card above the editor. fromSlate drops the mark, so user edits can
+  // never persist decoration state into canonical blocks.
+  const decorate = useCallback(
+    ([node, path]: NodeEntry) => {
+      const ranges: SlateRange[] = [];
+      if (!("blockId" in node)) return ranges;
+      const el = node as ConductinoSlateElement;
+      const change = modifies.get(el.blockId);
+      if (!change || change.type !== "modify") return ranges;
+      const text = Node.string(node);
+      const span = fragmentRange(text, change.highlightFragment || change.oldContent);
+      if (!span) return ranges;
+      ranges.push({
+        anchor: { path, offset: span.start },
+        focus: { path, offset: span.end },
+        pendingChangeId: change.id,
+      } as SlateRange & { pendingChangeId: ID });
+      return ranges;
+    },
+    [modifies],
+  );
+
   const renderElement = useCallback((props: RenderElementProps) => <Element {...props} />, []);
-  const renderLeaf = useCallback((props: RenderLeafProps) => <Leaf {...props} />, []);
+  const renderLeaf = useCallback(
+    (props: RenderLeafProps) => {
+      const l = props.leaf as ConductinoSlateText;
+      if (l.pendingChangeId) {
+        const cid = l.pendingChangeId;
+        return (
+          <span
+            {...props.attributes}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFocusId(cid);
+            }}
+            title="AI-proposed revision — click to review"
+            className="cursor-pointer rounded-[3px] bg-hay-100 px-0.5 underline decoration-hay-300 decoration-2 underline-offset-4"
+            data-change-id={cid}
+          >
+            {props.children}
+          </span>
+        );
+      }
+      return <Leaf {...props} />;
+    },
+    [],
+  );
+
+  const decide = (status: "accepted" | "rejected") => {
+    if (!focused) return;
+    dispatch({ type: "change.decide", id: focused.id, status });
+    dispatch({ type: "toast", message: status === "accepted" ? "Change accepted" : "Change rejected" });
+    setFocusId(null);
+  };
 
   return (
-    <Slate key={externalKey} editor={editor} initialValue={initial} onChange={onChange}>
-      <Editable
-        renderElement={renderElement}
-        renderLeaf={renderLeaf}
-        spellCheck={false}
-        className="outline-none min-h-[12rem]"
-        placeholder="Start writing the summary…"
-        onKeyDown={(event) => {
-          if (!event.metaKey && !event.ctrlKey) return;
-          if (event.key === "b") {
-            event.preventDefault();
-            const marks = Editor.marks(editor) as ConductinoSlateText | null;
-            if (marks?.strong) Editor.removeMark(editor, "strong");
-            else Editor.addMark(editor, "strong", true);
-          }
-          if (event.key === "i") {
-            event.preventDefault();
-            const marks = Editor.marks(editor) as ConductinoSlateText | null;
-            if (marks?.em) Editor.removeMark(editor, "em");
-            else Editor.addMark(editor, "em", true);
-          }
-        }}
-      />
-    </Slate>
+    <div>
+      {focused && (
+        <div className="fade-in mb-2 rounded-lg border border-hay-200 bg-hay-50 px-3 py-2.5">
+          <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-hay-600">
+            <Icon name="sparkles" size={12} /> Proposed revision
+            <Badge tone="hay">pending</Badge>
+            <button
+              type="button"
+              className="ml-auto font-normal normal-case tracking-normal text-mute hover:text-ink-700"
+              onClick={() => setFocusId(null)}
+            >
+              dismiss
+            </button>
+          </p>
+          <p className="font-serif text-[13.5px] leading-relaxed text-ink-700">{focused.newContent}</p>
+          <div className="mt-2 flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => decide("accepted")}
+              className="rounded-md bg-moss-600 px-2.5 py-1 text-[11.5px] font-medium text-white hover:bg-moss-700"
+            >
+              Accept
+            </button>
+            <button
+              type="button"
+              onClick={() => decide("rejected")}
+              className="rounded-md border border-line bg-white px-2.5 py-1 text-[11.5px] font-medium text-ink-700 hover:border-rose-300"
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                runRevise(focused.id);
+                setFocusId(null);
+              }}
+              className="rounded-md border border-line bg-white px-2.5 py-1 text-[11.5px] font-medium text-ink-700 hover:border-iris-300"
+            >
+              Revise again
+            </button>
+          </div>
+        </div>
+      )}
+      <Slate key={externalKey} editor={editor} initialValue={initial} onChange={onChange}>
+        <Editable
+          decorate={decorate}
+          renderElement={renderElement}
+          renderLeaf={renderLeaf}
+          spellCheck={false}
+          className="outline-none min-h-[12rem]"
+          placeholder="Start writing the summary…"
+          onKeyDown={(event) => {
+            if (!event.metaKey && !event.ctrlKey) return;
+            if (event.key === "b") {
+              event.preventDefault();
+              const marks = Editor.marks(editor) as ConductinoSlateText | null;
+              if (marks?.strong) Editor.removeMark(editor, "strong");
+              else Editor.addMark(editor, "strong", true);
+            }
+            if (event.key === "i") {
+              event.preventDefault();
+              const marks = Editor.marks(editor) as ConductinoSlateText | null;
+              if (marks?.em) Editor.removeMark(editor, "em");
+              else Editor.addMark(editor, "em", true);
+            }
+          }}
+        />
+      </Slate>
+    </div>
   );
 }
 
@@ -221,6 +322,7 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
   const changeByBlock = new Map(pending.map((c) => [c.blockId, c]));
 
   const pendingInserts = pending.filter((c) => c.type === "insert");
+  const pendingDeletes = pending.filter((c) => c.type === "delete");
   const pendingModifies = new Map(
     pending.filter((c) => c.type === "modify").map((c) => [c.blockId, c] as const),
   );
@@ -269,14 +371,20 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
         </span>
       </div>
 
-      {Array.from(pendingModifies.values()).map((change) => (
-        <div key={`mod-${change.id}`} className="mb-2">
-          <div className="mb-1 flex items-center gap-2 text-[11px] text-hay-600">
+      {/* Pending modifies render inline as editor decorations (click the
+          underlined span to review) — no cards here. Deletes and inserts
+          below still use cards. */}
+
+      {pendingDeletes.map((change) => (
+        <div key={`del-${change.id}`} className="fade-in mb-2 rounded-lg border border-rose-200 bg-rose-50/60 px-4 py-3">
+          <div className="mb-1 flex items-center gap-2 text-[11px] text-rose-600">
             <Icon name="sparkles" size={12} />
-            <span className="font-semibold uppercase tracking-wide">Proposed revision</span>
+            <span className="font-semibold uppercase tracking-wide">Proposed deletion</span>
             <Badge tone="hay">pending</Badge>
           </div>
-          <ModifiedText full={change.newContent} fragment={change.highlightFragment} />
+          <p className="font-serif text-[14px] leading-[1.7] text-ink-500 line-through decoration-rose-300">
+            {change.oldContent || "(empty block)"}
+          </p>
         </div>
       ))}
 
@@ -291,13 +399,14 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
       <SummarySlateEditor
         docId={doc.id}
         blocks={editableBlocks}
+        modifies={pendingModifies}
         externalKey={`${doc.id}:${pending.map((c) => c.id + c.status).join(",")}:${editableBlocks.length}`}
       />
 
       {pending.length === 0 && (
         <p className="mt-8 flex items-center gap-2 border-t border-line-soft pt-4 text-[11.5px] text-mute">
           <Icon name="shieldCheck" size={13} className="text-moss-600" />
-          AI edits appear here as highlighted proposals until you accept or reject them. Cmd/Ctrl+B bold, Cmd/Ctrl+I italic.
+          AI edits appear inline as underlined proposals — click one to accept, reject, or revise. Cmd/Ctrl+B bold, Cmd/Ctrl+I italic.
         </p>
       )}
     </div>

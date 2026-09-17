@@ -69,20 +69,35 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 		clean = strings.TrimSpace(text)
 	}
 
-	// If propose_summary_edit ran, surface insertion so the UI can propose a DocumentChange.
+	// If propose_summary_edit ran, surface the structured proposal so the UI
+	// can materialize a DocumentChange (insert/modify/delete) for review.
 	if host != nil {
-		if prop := strings.TrimSpace(host.LastProposal()); prop != "" {
-			emit(models.AIEvent{Type: "done", Payload: encodeChatWithInsertion(clean, prop)})
+		if prop := host.LastProposal(); strings.TrimSpace(prop.NewText) != "" || prop.Op == "delete" {
+			emit(models.AIEvent{Type: "done", Payload: encodeChatWithProposal(clean, prop)})
 			return
 		}
 	}
 	emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, clean)})
 }
 
-func encodeChatWithInsertion(explanation, insertText string) string {
+func encodeChatWithProposal(explanation string, prop proposal) string {
+	op := prop.Op
+	if op == "" {
+		op = "insert"
+	}
 	res := aiResult{
 		Explanation: strings.TrimSpace(explanation),
-		Insertion:   &aiInsertion{Text: strings.TrimSpace(insertText), Citation: "(AI draft)"},
+		Proposals: []aiProposal{{
+			Op:                op,
+			TargetBlockID:     strings.TrimSpace(prop.Target),
+			OldContent:        strings.TrimSpace(prop.OldText),
+			NewContent:        strings.TrimSpace(prop.NewText),
+			HighlightFragment: strings.TrimSpace(prop.Highlight),
+		}},
+	}
+	// Legacy insertion mirror for older frontends (insert path only).
+	if op == "insert" {
+		res.Insertion = &aiInsertion{Text: strings.TrimSpace(prop.NewText), Citation: "(AI draft)"}
 	}
 	b, err := json.Marshal(res)
 	if err != nil {

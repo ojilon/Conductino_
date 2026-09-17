@@ -62,7 +62,7 @@ func ParseBlocksJSON(s string) ([]docxBlock, error) {
 
 // ---- READ: openDocxFile ----
 
-func openDocxFile(absPath string) (models.OpenedDocument, error) {
+func openDocxFile(absPath, relKey string) (models.OpenedDocument, error) {
 	info, err := os.Stat(absPath)
 	if err != nil {
 		reason, _ := ReasonOf(err)
@@ -98,7 +98,7 @@ func openDocxFile(absPath string) (models.OpenedDocument, error) {
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonParseError, Detail: "word/document.xml missing", Err: fmt.Errorf("missing document.xml")}
 	}
 
-	blocks, err := parseDocumentXML(docXML)
+	blocks, err := parseDocumentXML(docXML, relKey)
 	if err != nil {
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonParseError, Detail: err.Error(), Err: err}
 	}
@@ -144,15 +144,16 @@ type wText struct {
 	Value string `xml:",chardata"`
 }
 
-func parseDocumentXML(data []byte) ([]docxBlock, error) {
+func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 	cleaned := stripXMLNamespaces(data)
 	var doc wDocument
 	if err := xml.Unmarshal(cleaned, &doc); err != nil {
 		return nil, fmt.Errorf("xml: %w", err)
 	}
 	blocks := make([]docxBlock, 0, len(doc.Body.Paragraphs))
-	for i, p := range doc.Body.Paragraphs {
-		if i >= maxTextBlocks {
+	seen := map[string]int{}
+	for _, p := range doc.Body.Paragraphs {
+		if len(blocks) >= maxTextBlocks {
 			break
 		}
 		segs := make([]docxSegment, 0, len(p.Runs))
@@ -179,24 +180,35 @@ func parseDocumentXML(data []byte) ([]docxBlock, error) {
 		if len(segs) == 0 {
 			continue
 		}
-		b := docxBlock{ID: fmt.Sprintf("docx-%d", i), Type: "paragraph", Segments: segs}
+		typ, level := "paragraph", 0
 		if p.Props != nil && p.Props.Style != nil {
 			style := strings.ToLower(p.Props.Style.Val)
 			switch {
 			case strings.Contains(style, "heading1") || style == "title":
-				b.Type, b.Level = "heading", 1
+				typ, level = "heading", 1
 			case strings.Contains(style, "heading2"):
-				b.Type, b.Level = "heading", 2
+				typ, level = "heading", 2
 			case strings.Contains(style, "heading3"):
-				b.Type, b.Level = "heading", 3
+				typ, level = "heading", 3
 			case strings.HasPrefix(style, "heading"):
-				b.Type, b.Level = "heading", 2
+				typ, level = "heading", 2
 			}
+		}
+		var full strings.Builder
+		for _, s := range segs {
+			full.WriteString(s.Text)
+		}
+		occKey := typ + "\x00" + normalizeBlockText(full.String())
+		occ := seen[occKey]
+		seen[occKey] = occ + 1
+		b := docxBlock{ID: stableBlockID(relKey, typ, level, full.String(), occ), Type: typ, Segments: segs}
+		if level > 0 {
+			b.Level = level
 		}
 		blocks = append(blocks, b)
 	}
 	if len(blocks) == 0 {
-		blocks = append(blocks, docxBlock{ID: "docx-0", Type: "paragraph", Segments: []docxSegment{{Text: ""}}})
+		blocks = append(blocks, docxBlock{ID: stableBlockID(relKey, "paragraph", 0, "", 0), Type: "paragraph", Segments: []docxSegment{{Text: ""}}})
 	}
 	return blocks, nil
 }
