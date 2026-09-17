@@ -169,13 +169,13 @@ func (g *GeminiAIService) Run(ctx context.Context, req models.AIRequest, sink AI
 		emit(models.AIEvent{Type: "error", Message: "Web search is not connected — AI Browse cannot run yet."})
 		return
 	}
-	prompt, kind := buildPrompt(op, req)
+	prompt, kind, maxTokens := buildPrompt(op, req)
 	if prompt == "" {
 		emit(models.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
 		return
 	}
 	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting Gemini"})
-	text, err := g.generate(ctx, prompt)
+	text, err := g.generate(ctx, prompt, maxTokens)
 	if err != nil {
 		emit(models.AIEvent{Type: "error", Message: err.Error()})
 		return
@@ -192,10 +192,21 @@ const (
 	kindRevision    promptKind = "revision"
 )
 
-// buildPrompt translates an AI operation into a model prompt plus the result
-// kind its answer belongs to. It returns "" for operations this service does
-// not serve (AI_SEARCH is rejected earlier with its own honest message).
-func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKind) {
+// tokenBudgetExplanation/tokenBudgetShort size the per-call output ceiling.
+// Explanations and insertions need headroom for a full paragraph; revisions
+// restate the input and stay small. Thinking is disabled (see
+// geminiGenerationConfig), so the whole budget is visible text — these
+// ceilings are generous, not tight.
+const (
+	tokenBudgetExplanation = 2048
+	tokenBudgetShort       = 1024
+)
+
+// buildPrompt translates an AI operation into a model prompt, the result kind
+// its answer belongs to, and its token ceiling. It returns "" for operations
+// this service does not serve (AI_SEARCH is rejected earlier with its own
+// honest message).
+func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKind, int) {
 	sel := strings.TrimSpace(req.SelectionText)
 	if sel == "" {
 		sel = strings.TrimSpace(req.Selection)
@@ -203,27 +214,27 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 	query := strings.TrimSpace(req.Query)
 	switch op {
 	case models.OpExplain:
-		return "Explain the following passage from a research document concisely, in 2-4 sentences, for a researcher:\n\n" + sel, kindExplanation
+		return "Explain the following passage from a research document concisely, in 2-4 sentences, for a researcher. Always finish your final sentence:\n\n" + sel, kindExplanation, tokenBudgetExplanation
 	case models.OpVerify:
-		return "Assess the following claim from a research document in 2-4 sentences: is it well-supported on its face, and what caveat (if any) should a researcher keep in mind? Claim:\n\n" + sel, kindExplanation
+		return "Assess the following claim from a research document in 2-4 sentences: is it well-supported on its face, and what caveat (if any) should a researcher keep in mind? Always finish your final sentence. Claim:\n\n" + sel, kindExplanation, tokenBudgetExplanation
 	case models.OpExpand:
-		return "Go deeper on the following passage from a research document: unpack the mechanism, add relevant quantitative or contextual detail, in one short paragraph:\n\n" + sel, kindExplanation
+		return "Go deeper on the following passage from a research document: unpack the mechanism, add relevant quantitative or contextual detail, in one short paragraph. Always finish your final sentence:\n\n" + sel, kindExplanation, tokenBudgetExplanation
 	case models.OpSummarize:
 		text := sel
 		if text == "" {
 			text = query
 		}
-		return "Summarize the following text in 3-5 sentences for a research summary:\n\n" + text, kindExplanation
+		return "Summarize the following text in 3-5 sentences for a research summary. Always finish your final sentence:\n\n" + text, kindExplanation, tokenBudgetExplanation
 	case models.OpMerge:
-		return "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained:\n\n" + sel, kindInsertion
+		return "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Always finish your final sentence:\n\n" + sel, kindInsertion, tokenBudgetExplanation
 	case models.OpRewrite:
 		draft := query
 		if draft == "" {
 			draft = sel
 		}
-		return "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft, kindRevision
+		return "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft, kindRevision, tokenBudgetShort
 	default:
-		return "", ""
+		return "", "", 0
 	}
 }
 
@@ -266,6 +277,16 @@ type geminiPart struct {
 type geminiGenerationConfig struct {
 	Temperature     float32 `json:"temperature,omitempty"`
 	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
+	// ThinkingConfig disables model reasoning output. Our prompts ask for
+	// short factual answers where hidden thinking buys nothing — and thinking
+	// tokens come out of the SAME maxOutputTokens budget, so leaving it on
+	// is what used to cut answers off mid-sentence (finishReason MAX_TOKENS
+	// with no visible cause). Budget 0 = the whole ceiling is answer text.
+	ThinkingConfig geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+type geminiThinkingConfig struct {
+	ThinkingBudget int `json:"thinkingBudget,omitempty"`
 }
 
 type geminiResponse struct {
@@ -275,6 +296,10 @@ type geminiResponse struct {
 
 type geminiCandidate struct {
 	Content geminiContent `json:"content"`
+	// FinishReason reports why the model stopped: "STOP" (complete) vs
+	// "MAX_TOKENS" (cut off by the ceiling) and others. Captured so a
+	// truncated answer is never silently served as a finished one.
+	FinishReason string `json:"finishReason,omitempty"`
 }
 
 type geminiAPIError struct {
@@ -285,10 +310,16 @@ type geminiAPIError struct {
 // generate performs one blocking generateContent call and returns the joined
 // response text. Failures are returned as short, key-free errors safe to show
 // in the UI (the key travels only in the request header, never in messages).
-func (g *GeminiAIService) generate(ctx context.Context, prompt string) (string, error) {
+// A MAX_TOKENS stop is treated as a failure — not a partial success — so the
+// UI says the answer was cut off instead of showing a sentence that just ends.
+func (g *GeminiAIService) generate(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	wire, err := json.Marshal(geminiRequest{
-		Contents:         []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
-		GenerationConfig: geminiGenerationConfig{Temperature: 0.3, MaxOutputTokens: 1024},
+		Contents: []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:     0.3,
+			MaxOutputTokens: maxTokens,
+			ThinkingConfig:  geminiThinkingConfig{ThinkingBudget: 0},
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("AI request failed to encode.")
@@ -320,7 +351,11 @@ func (g *GeminiAIService) generate(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("AI unavailable now: %s", truncateRunes(detail, 220))
 	}
 	var sb strings.Builder
+	cutOff := false
 	for _, c := range decoded.Candidates {
+		if strings.EqualFold(strings.TrimSpace(c.FinishReason), "MAX_TOKENS") {
+			cutOff = true
+		}
 		for _, p := range c.Content.Parts {
 			sb.WriteString(p.Text)
 		}
@@ -328,6 +363,9 @@ func (g *GeminiAIService) generate(ctx context.Context, prompt string) (string, 
 	text := strings.TrimSpace(sb.String())
 	if text == "" {
 		return "", fmt.Errorf("AI returned an empty response.")
+	}
+	if cutOff {
+		return "", fmt.Errorf("AI response was cut off — try a shorter selection.")
 	}
 	return text, nil
 }
