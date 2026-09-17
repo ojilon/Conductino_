@@ -15,12 +15,28 @@ import { useApp, activeReaderDocument, primarySummaryDocument, activeWorkspace }
 import { buildContextPack } from "./contextPack";
 import { getAIProvider } from "../services/ai";
 import { uid } from "../utils/helpers";
-import type { AIActivity, AIOperation, ChatMessage, ChatThread, ChatTurn } from "../types/domain";
+import type { AIActivity, AIOperation, ChatMessage, ChatThread, ChatTurn, Document } from "../types/domain";
 
 export interface SelectionRef {
   documentId: string;
   blockId: string;
   text: string;
+}
+
+/** Plain-text snapshot of a document for tool/context (Phase 5 summary tool). */
+function documentPlainText(doc: Document | undefined, maxChars = 8000): string {
+  if (!doc?.blocks?.length) return "";
+  const parts: string[] = [];
+  for (const b of doc.blocks) {
+    if (b.type === "list" && b.listItems?.length) {
+      parts.push(b.listItems.map((item) => "• " + item.map((s) => s.text).join("")).join("\n"));
+    } else {
+      parts.push(b.segments.map((s) => s.text).join(""));
+    }
+  }
+  let t = parts.join("\n\n").trim();
+  if (t.length > maxChars) t = t.slice(0, maxChars - 20) + "\n…[truncated]";
+  return t;
 }
 
 export function useAIRunners() {
@@ -301,14 +317,13 @@ export function useAIRunners() {
     );
   }, [state, start, finish, dispatch]);
 
-  /* ---------- Phase 4: multi-turn chat ---------- */
+  /* ---------- Phase 4/5: multi-turn chat (+ tools) ---------- */
 
   /** Ensure a workspace-scoped thread exists and is active; returns its id. */
   const ensureThread = useCallback(
     (documentId?: string): string => {
       const ws = activeWorkspace(state);
       const wsId = ws?.id ?? "ws-demo";
-      // Prefer an existing thread for this workspace (+ optional document).
       const existing = Object.values(state.chat.byId).find(
         (t) => t.workspaceId === wsId && (documentId ? t.documentId === documentId : true),
       );
@@ -345,6 +360,7 @@ export function useAIRunners() {
       const documentId = doc?.id;
       const wsId = activeWorkspace(state)?.id ?? doc?.workspaceId;
       const threadId = ensureThread(documentId);
+      const summary = primarySummaryDocument(state);
 
       const userMsg: ChatMessage = {
         id: uid("msg"),
@@ -356,7 +372,6 @@ export function useAIRunners() {
       dispatch({ type: "chat.append", threadId, message: userMsg });
       dispatch({ type: "reader.ui", patch: { aiPanelTab: "chat", aiPanelOpen: true } });
 
-      // History = prior messages only (exclude the one we just appended).
       const thread = state.chat.byId[threadId];
       const prior: ChatTurn[] = (thread?.messages ?? []).map((m) => ({
         role: m.role === "system" ? "system" : m.role === "assistant" ? "assistant" : "user",
@@ -384,6 +399,8 @@ export function useAIRunners() {
           contextPack: contextPack || undefined,
           messageHistory: prior,
           mode: "chat",
+          summaryContent: documentPlainText(summary) || undefined,
+          primarySummaryId: summary?.id,
         },
         {
           onPhase: (_i, label) =>
@@ -401,7 +418,47 @@ export function useAIRunners() {
               documentId,
             };
             dispatch({ type: "chat.append", threadId, message: assistantMsg });
-            finish(id, { status: "completed", message: "Chat reply" });
+
+            // Phase 5: propose_summary_edit → DocumentChange (user still must accept).
+            let changeIds: string[] = [];
+            if (result.insertion?.text?.trim() && summary) {
+              const changeId = uid("chg");
+              const blockId = uid("s-ai");
+              const insertText = `${result.insertion.text} ${result.insertion.citation ?? "(AI draft)"}`;
+              dispatch({
+                type: "change.propose",
+                change: {
+                  id: changeId,
+                  documentId: summary.id,
+                  workspaceId: wsId,
+                  type: "insert",
+                  blockId,
+                  oldContent: "",
+                  newContent: insertText,
+                  sourceId: doc?.sourceId ?? summary.sourceId,
+                  activityId: id,
+                  status: "pending",
+                  createdAt: Date.now(),
+                },
+                block: {
+                  id: blockId,
+                  type: "paragraph",
+                  changeId,
+                  segments: [{ text: insertText }],
+                },
+              });
+              changeIds = [changeId];
+              dispatch({
+                type: "toast",
+                message: "Chat proposed a summary edit — review it on the summary tab",
+              });
+            }
+
+            finish(id, {
+              status: "completed",
+              message: changeIds.length ? "Chat reply + summary proposal" : "Chat reply",
+              changeIds,
+            });
           },
           onError: (message) => {
             const errMsg: ChatMessage = {
