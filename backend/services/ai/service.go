@@ -5,10 +5,12 @@
 // boundary into JS. The React UI talks to this package through a thin TS
 // provider (frontend/src/services/ai.ts → App.StreamAIRequest → "ai://event").
 //
-// Layout (Phase 1 split of the former services/ai.go):
+// Layout:
 //   service.go  — AIService interface, New, Run entry, key resolution
 //   gemini.go   — HTTP client against generateContent
 //   prompts.go  — operation → prompt templates and result encoding
+//   tools.go    — folder-scoped tool registry + Resolve guards (Phase 5)
+//   chat.go     — multi-turn tool loop for AI_CHAT
 package ai
 
 import (
@@ -52,6 +54,9 @@ type GeminiService struct {
 	apiKey string
 	model  string
 	client *http.Client
+	// Optional workspace tools (Phase 5). Nil → chat still works without tools.
+	fs   PathResolver
+	docs FileOpener
 }
 
 // New builds the backend AI service, loading the key once at startup.
@@ -63,6 +68,14 @@ func New() *GeminiService {
 		model:  defaultGeminiModel,
 		client: &http.Client{Timeout: 90 * time.Second},
 	}
+}
+
+// NewWithTools builds Gemini with folder-scoped tools (Resolve + OpenFile).
+func NewWithTools(fs PathResolver, docs FileOpener) *GeminiService {
+	g := New()
+	g.fs = fs
+	g.docs = docs
+	return g
 }
 
 // ProviderName is shown in the Settings dialog.
@@ -139,6 +152,19 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 		emit(models.AIEvent{Type: "error", Message: "Web search is not connected — AI Browse cannot run yet."})
 		return
 	}
+
+	// Phase 5: chat uses the tool loop when filesystem tools are wired.
+	if op == models.OpChat {
+		host := &ToolHost{
+			FS:               g.fs,
+			Docs:             g.docs,
+			SummaryText:      req.SummaryContent,
+			PrimarySummaryID: req.PrimarySummaryID,
+		}
+		g.runChatWithTools(ctx, req, host, emit)
+		return
+	}
+
 	prompt, kind, maxTokens := buildPrompt(op, req)
 	if prompt == "" {
 		emit(models.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
