@@ -12,9 +12,11 @@ type AIEventSink = ai.EventSink
 // AIService is the boundary for all model access on the Go side.
 type AIService = ai.Service
 
-// NewAI builds the backend AI service (Gemini). Implementation lives in
-// package ai (backend/services/ai/); this shim preserves the historical
-// services.NewAI() call site used by backend.NewBackend.
-func NewAI() AIService {
-	return ai.New()
+// NewAI builds the backend AI service (Gemini) with folder-scoped tools.
+// fs and docs may be nil (tools degrade gracefully; chat still works).
+func NewAI(fs *Filesystem, docs *Documents) AIService {
+	if fs == nil && docs == nil {
+		return ai.New()
+	}
+	return ai.NewWithTools(fs, docs)
 }
