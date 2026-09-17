@@ -149,6 +149,12 @@ func (a *App) SetPrimarySummary(summaryID string) error {
 	return a.backend.SetPrimarySummary(summaryID)
 }
 
+// WriteSummaryDOCX writes the summary blocks as a .docx under the library root.
+// relPath may be empty (auto name from title). Returns absolute path written.
+func (a *App) WriteSummaryDOCX(relPath, blocksJSON string) (string, error) {
+	return a.backend.WriteSummaryDOCX(relPath, blocksJSON)
+}
+
 // SaveDocument persists a document record.
 func (a *App) SaveDocument(doc services.DocumentRecord) error {
 	return a.backend.SaveDocument(doc)
