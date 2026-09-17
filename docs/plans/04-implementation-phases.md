@@ -13,11 +13,13 @@ leave the app shippable (no broken reader).
 ## Phase 1 — Backend AI package split (no behavior change)
 **Goal:** `backend/services/ai.go` → `backend/services/ai/*`.
 
-- Move Gemini client, prompts, Run entry.
-- Keep identical events and operations.
-- Update imports; `go test` / `wails` smoke.
+- [x] Move Gemini client, prompts, Run entry.
+- [x] Keep identical events and operations (`services.NewAI` shim).
+- [x] Update imports; `go build ./backend/...` + `go vet` OK.
 
 **Exit:** explain / merge / revise still work end-to-end.
+
+**Landed:** `backend/services/ai/{service,prompts,gemini}.go` + `ai_shim.go`; old `services/ai.go` removed.
 
 ## Phase 2 — Workspace identity & summary mapping
 **Goal:** kill first-summary-wins.
