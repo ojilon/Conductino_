@@ -21,7 +21,7 @@
  * See docs/ai-integration.md for the full contract.
  */
 
-import type { AIHandlers, AIProvider, AIRequest, AIResult } from "../types/domain";
+import type { AIHandlers, AIProvider, AIRequest, AIResult, ChatTurn } from "../types/domain";
 import { uid } from "../utils/helpers";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
@@ -44,6 +44,9 @@ interface GoAIRequest {
   customPrompt?: string;
   includeDocumentContext?: boolean;
   contextPack?: string;
+  /** Phase 4 multi-turn. */
+  messageHistory?: ChatTurn[];
+  mode?: string;
 }
 
 interface GoAIEvent {
@@ -165,6 +168,8 @@ class WailsAIProvider implements AIProvider {
         customPrompt: request.customPrompt,
         includeDocumentContext: request.includeDocumentContext,
         contextPack: request.contextPack,
+        messageHistory: request.messageHistory,
+        mode: request.mode,
         requestId,
       })
       .catch((e: unknown) =>
