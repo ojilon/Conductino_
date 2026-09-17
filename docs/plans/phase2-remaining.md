@@ -1,26 +1,25 @@
-# Phase 2 — remaining local patches
+# Phase 2 — status
 
-GitHub write tools cap single-file content at ~4KB, so the full `data.ts` (27KB)
-and `ReaderMode.tsx` (12KB) updates could not be pushed in one shot.
+**Exit criteria met** on `feature/academic-harness-reader-ai`.
 
-## Already on branch `feature/academic-harness-reader-ai`
+## Landed
 
-- `frontend/src/types/domain.ts` — WorkspaceSession, workspaceId fields, AppState.workspace
-- `frontend/src/state/aiController.ts` — primarySummaryDocument / activeWorkspace
-- `frontend/src/state/actions.ts` — workspace.* action union
-- `frontend/src/state/selectors.ts` — primarySummaryDocument, workspaceIdFromRoot, …
-- `frontend/src/state/reduceWorkspace.ts` — ensure / setActive / setPrimarySummary / createSummary
-- `frontend/src/state/reducePart{1a,1b,2,3,4}.ts` — split reducer (size limit)
-- `frontend/src/state/appState.tsx` — thin provider + workspace seed wrapper
+| Piece | Status |
+|-------|--------|
+| Domain `WorkspaceSession` + `workspaceId` | done |
+| `actions` / `selectors` / `reduceWorkspace` / reduce parts | done |
+| `aiController` → `primarySummaryDocument` | done |
+| `ReaderMode` folder pick + openFile `workspaceId` | done |
+| Mock seed: workspace + runtime tags on sources/docs/changes | done (via `createInitialState` wrapper in `appState.tsx`) |
 
-## Apply locally (from repo root)
+## Optional cleanup
 
-### 1. `frontend/src/mock/data.ts`
-
-Add `workspaceId: "ws-demo"` to every seeded Source, Document, and DocumentChange.
-In `createInitialState()`, add:
+`frontend/src/mock/data.ts` can still be retagged at source with `workspaceId: "ws-demo"`
+and an inline `workspace` block in `createInitialState` so the seed wrapper is no longer
+needed. That is cosmetic: the wrapper already injects the same tags at runtime.
 
 ```ts
+// createInitialState workspace block (optional, already injected by appState):
 workspace: {
   activeId: "ws-demo",
   byId: {
@@ -33,33 +32,3 @@ workspace: {
   },
 },
 ```
-
-(The appState wrapper already injects this if missing, so the app runs without it;
-tagging is still required for correct multi-workspace mock behavior.)
-
-### 2. `frontend/src/features/reader/ReaderMode.tsx`
-
-```ts
-import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
-```
-
-In `pickFolder`, after resolving `abs`:
-
-```ts
-const wsId = workspaceIdFromRoot(abs);
-dispatch({
-  type: "workspace.ensure",
-  session: {
-    id: wsId,
-    rootPath: abs,
-    primarySummaryId: null,
-    label: abs.split(/[/\\]/).filter(Boolean).pop() ?? abs,
-  },
-});
-dispatch({ type: "workspace.setActive", id: wsId });
-```
-
-When opening a file, set `workspaceId: state.workspace.activeId ?? undefined` on
-both the Source and Document.
-
-Full patch also lives in the conversation artifacts as `phase2.patch`.

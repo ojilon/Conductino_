@@ -29,12 +29,14 @@ leave the app shippable (no broken reader).
 - [x] Actions: `workspace.ensure` / `setActive` / `setPrimarySummary` / `createSummary`.
 - [x] `runIncludeInSummary` uses `primarySummaryDocument` (no global find).
 - [x] Folder pick binds a workspace; opened files inherit `workspaceId`.
-- [x] Mock seed: `ws-demo` → `doc-summ`.
+- [x] Mock seed: `ws-demo` → `doc-summ` (via appState createInitialState wrapper + runtime tags).
 
 **Exit:** two folders / two summaries never cross-contaminate.
 
 **Note:** DOCX file under folder for new summaries is deferred to Phase 8;
 `workspace.createSummary` creates the in-app document + mapping now.
+Reducer was modularized (`reducePart*`, `reduceWorkspace`) due to GitHub
+write size limits during the branch push.
 
 ## Phase 3 — Context pack for oneshot AI
 **Goal:** explanations use more than the highlight.
