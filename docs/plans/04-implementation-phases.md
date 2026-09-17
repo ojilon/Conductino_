@@ -24,13 +24,17 @@ leave the app shippable (no broken reader).
 ## Phase 2 — Workspace identity & summary mapping
 **Goal:** kill first-summary-wins.
 
-- Add `workspaceId` (or sessionId) to Document / Source / Change / Activity.
-- WorkspaceSession (or extend existing workspace service) holds
-  `primarySummaryId`.
-- Create-summary action: new summary doc + optional file under root.
-- `runIncludeInSummary` resolves via mapping.
+- [x] Add `workspaceId` to Document / Source / Change / Activity.
+- [x] `WorkspaceSession` + `AppState.workspace` with `primarySummaryId`.
+- [x] Actions: `workspace.ensure` / `setActive` / `setPrimarySummary` / `createSummary`.
+- [x] `runIncludeInSummary` uses `primarySummaryDocument` (no global find).
+- [x] Folder pick binds a workspace; opened files inherit `workspaceId`.
+- [x] Mock seed: `ws-demo` → `doc-summ`.
 
 **Exit:** two folders / two summaries never cross-contaminate.
+
+**Note:** DOCX file under folder for new summaries is deferred to Phase 8;
+`workspace.createSummary` creates the in-app document + mapping now.
 
 ## Phase 3 — Context pack for oneshot AI
 **Goal:** explanations use more than the highlight.
