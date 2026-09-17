@@ -26,7 +26,8 @@ import (
 //	HTML  → golang.org/x/net/html → block/segment tree
 //	TXT   → line split
 //
-// Until then, Extract returns a mock single-block document.
+// Phase 8: .docx is handled via stdlib ZIP+OOXML (docx.go). PDF remains
+// unsupported until a pure-Go arm lands.
 type DocumentService interface {
 	Extract(ctx context.Context, source models.Source) (blocksJSON string, pageCount int, err error)
 	// OpenFile reads a resolved absolute path and returns displayable
@@ -39,7 +40,7 @@ type DocumentService interface {
 }
 
 // ErrUnsupportedType signals "no extractor for this extension yet" (PDF,
-// DOCX, … until their arms land).
+// … until their arms land). DOCX is supported as of Phase 8.
 var ErrUnsupportedType = fmt.Errorf("unsupported file type for extraction")
 
 // OpenError is a classified open failure (tasks.md 1.2): the Reason lets the
@@ -97,6 +98,9 @@ func (d *Documents) OpenFile(absPath string) (models.OpenedDocument, error) {
 		// Trivial arm: plain text reads directly, no parser dependency.
 		// Proves the click → path → content pipe end-to-end.
 		return openTextFile(absPath)
+	case "docx":
+		// Phase 8: stdlib ZIP+OOXML text extraction (paragraph/run + bold/italic).
+		return openDocxFile(absPath)
 	default:
 		return models.OpenedDocument{}, &OpenError{
 			Reason: models.ReasonUnsupported,
@@ -112,6 +116,7 @@ func (d *Documents) OpenFile(absPath string) (models.OpenedDocument, error) {
 type textBlock struct {
 	ID       string        `json:"id"`
 	Type     string        `json:"type"`
+	Level    int           `json:"level,omitempty"`
 	Segments []textSegment `json:"segments"`
 }
 
@@ -146,11 +151,25 @@ func openTextFile(absPath string) (models.OpenedDocument, error) {
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
-		blocks = append(blocks, textBlock{
+		// Markdown-ish headings at the start of a paragraph (# / ## / ###).
+		line := strings.TrimSpace(p)
+		typ, level, body := "paragraph", 0, p
+		if strings.HasPrefix(line, "### ") {
+			typ, level, body = "heading", 3, strings.TrimPrefix(line, "### ")
+		} else if strings.HasPrefix(line, "## ") {
+			typ, level, body = "heading", 2, strings.TrimPrefix(line, "## ")
+		} else if strings.HasPrefix(line, "# ") {
+			typ, level, body = "heading", 1, strings.TrimPrefix(line, "# ")
+		}
+		blk := textBlock{
 			ID:       fmt.Sprintf("txt-%d", len(blocks)),
-			Type:     "paragraph",
-			Segments: []textSegment{{Text: p}},
-		})
+			Type:     typ,
+			Segments: []textSegment{{Text: body}},
+		}
+		if level > 0 {
+			blk.Level = level
+		}
+		blocks = append(blocks, blk)
 	}
 	if len(blocks) == 0 {
 		blocks = append(blocks, textBlock{ID: "txt-0", Type: "paragraph", Segments: []textSegment{{Text: ""}}})
@@ -166,4 +185,11 @@ func openTextFile(absPath string) (models.OpenedDocument, error) {
 		PageCount:  1,
 		Kind:       "text",
 	}, nil
+}
+
+// WriteSummaryDOCX serializes blocksJSON to a .docx under the workspace root.
+// relPath is workspace-relative (e.g. summaries/My-Title.docx). Returns the
+// absolute path written. Phase 8.
+func (d *Documents) WriteSummaryDOCX(absRoot, relPath, blocksJSON string) (string, error) {
+	return WriteSummaryDOCXPath(absRoot, relPath, blocksJSON)
 }
