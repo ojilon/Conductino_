@@ -64,12 +64,12 @@ export interface ContextPackOpts {
 }
 
 /**
- * Assemble a structured context pack for explain / expand / verify / merge.
- * Always includes the selection; window + outline when the document has blocks.
+ * Assemble a structured context pack for explain / expand / verify / merge / chat.
+ * Selection is optional (chat may attach only title + outline).
  */
 export function buildContextPack(
   doc: Document | undefined,
-  selection: { blockId: ID; text: string },
+  selection?: { blockId: ID; text: string },
   opts: ContextPackOpts = {},
 ): string {
   const radius = opts.windowBlocks ?? DEFAULT_WINDOW;
@@ -77,7 +77,7 @@ export function buildContextPack(
   const includeOutline = opts.includeOutline !== false;
 
   const parts: string[] = [];
-  const sel = selection.text.trim();
+  const sel = selection?.text?.trim();
   if (sel) {
     parts.push("### Selection\n" + sel);
   }
@@ -86,9 +86,11 @@ export function buildContextPack(
     const title = doc.metadata?.title?.trim();
     if (title) parts.push("### Document\n" + title);
 
-    const { before, after } = localWindow(doc, selection.blockId, radius);
-    if (before) parts.push("### Before selection\n" + before);
-    if (after) parts.push("### After selection\n" + after);
+    if (selection?.blockId) {
+      const { before, after } = localWindow(doc, selection.blockId, radius);
+      if (before) parts.push("### Before selection\n" + before);
+      if (after) parts.push("### After selection\n" + after);
+    }
 
     if (includeOutline) {
       const outline = documentOutline(doc);
