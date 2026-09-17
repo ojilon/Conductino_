@@ -23,8 +23,10 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 		return
 	}
 
-	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting Gemini"})
-	text, err := g.generate(ctx, prompt, maxTokens)
+	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
+	text, err := g.generateWithFailover(ctx, prompt, maxTokens, func(label string) {
+		emit(models.AIEvent{Type: "phase", Label: label})
+	})
 	if err != nil {
 		emit(models.AIEvent{Type: "error", Message: err.Error()})
 		return
@@ -53,7 +55,9 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 			strings.Join(results, "\n\n") +
 			"\n\n### Instruction\nUsing the tool results above, answer the user. Do not invent file contents. " +
 			"If you still need a tool, emit at most one more tool tag; otherwise reply in plain prose only."
-		text, err = g.generate(ctx, follow, maxTokens)
+		text, err = g.generateWithFailover(ctx, follow, maxTokens, func(label string) {
+			emit(models.AIEvent{Type: "phase", Label: label})
+		})
 		if err != nil {
 			emit(models.AIEvent{Type: "error", Message: err.Error()})
 			return
