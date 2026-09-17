@@ -5,135 +5,179 @@
  * It talks to `AIProvider` (src/types/domain.ts) only, obtained via
  * `getAIProvider()`.
  *
- * To connect a real provider:
- *   1. Implement `AIProvider` (e.g. `OpenAIProvider`) in this file or a
- *      sibling file — call your API from `run()`, report progress via
- *      `handlers.onPhase(...)`, deliver results via `handlers.onDone(...)`.
- *   2. Call `setAIProvider(new OpenAIProvider(apiKey))` once at startup
- *      (App.tsx) when configuration is available.
- *   3. In a Wails build, the provider can instead forward requests to the
- *      Go backend (backend/services/ai.go) — same handlers, different transport.
+ * The single implementation is `WailsAIProvider`: a thin wrapper over the
+ * Go backend (`backend/services/ai.go`, a Gemini-backed AIService). A call
+ * goes TS → bound `App.StreamAIRequest` → Go runs the model → progress and
+ * results come back as `AIEvent`s on the shared "ai://event" channel, which
+ * this file demultiplexes back to the originating caller by `requestId`.
+ * The API key lives only in Go (process env or git-ignored backend/.ai.env)
+ * and never crosses into JS.
+ *
+ * Failure policy: there is no mock fallback. No bridge (browser mode), a
+ * missing key, a network failure, or an unknown operation all surface as
+ * `handlers.onError(...)`, and the UI renders an explicit error where the
+ * answer was expected.
  *
  * See docs/ai-integration.md for the full contract.
  */
 
-import type { AIHandlers, AIProvider, AIRequest } from "../types/domain";
-import {
-  browseResultIds,
-  explanationFor,
-  expansionFor,
-  verificationFor,
-  relatedSourcesFor,
-  insertionFor,
-  revisionFor,
-} from "../mock/aiContent";
+import type { AIHandlers, AIProvider, AIRequest, AIResult } from "../types/domain";
+import { uid } from "../utils/helpers";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 /* ------------------------------------------------------------------ */
-/* Mock provider — simulates streaming so the UI behaves for real      */
+/* Wire shapes (mirror backend/models/models.go — keep in sync)        */
 /* ------------------------------------------------------------------ */
 
-interface Step {
-  label: string;
-  delay: number;
+/** Flattened Go AIRequest: TS `selection: {blockId, text}` arrives split. */
+interface GoAIRequest {
+  operation: string;
+  query?: string;
+  documentId?: string;
+  sourceId?: string;
+  changeId?: string;
+  selection?: string;
+  selectionText?: string;
+  blockId?: string;
+  requestId?: string;
 }
 
-const BROWSE_STEPS: Step[] = [
-  { label: "Searching", delay: 650 },
-  { label: "Finding sources", delay: 750 },
-  { label: "Comparing sources", delay: 850 },
-  { label: "Ranking results", delay: 650 },
-  { label: "Preparing useful sources", delay: 550 },
-];
+interface GoAIEvent {
+  type: string; // "phase" | "sources" | "done" | "error"
+  requestId?: string;
+  phase?: number;
+  label?: string;
+  sourceIds?: string[];
+  /** JSON-encoded AIResult on "done". */
+  payload?: string;
+  /** Human-readable reason on "error". */
+  message?: string;
+}
 
-const EXPLAIN_STEPS: Step[] = [
-  { label: "Reading selection", delay: 500 },
-  { label: "Locating context", delay: 700 },
-  { label: "Drafting explanation", delay: 800 },
-];
+interface GoBridge {
+  StreamAIRequest(req: GoAIRequest): Promise<void>;
+}
 
-const MERGE_STEPS: Step[] = [
-  { label: "Extracting claim", delay: 550 },
-  { label: "Aligning with summary", delay: 750 },
-  { label: "Drafting insertion", delay: 700 },
-];
+/** Non-null only inside the desktop build (wails dev / wails build). */
+function goBridge(): GoBridge | null {
+  const w = window as unknown as { go?: { frontend?: { App?: GoBridge } } };
+  return w.go?.frontend?.App ?? null;
+}
 
-const SIMPLE_STEPS: Step[] = [{ label: "Working", delay: 900 }];
+/* ------------------------------------------------------------------ */
+/* Event demultiplexer (one shared "ai://event" channel)               */
+/* ------------------------------------------------------------------ */
 
-function stepsFor(request: AIRequest): Step[] {
-  switch (request.operation) {
-    case "AI_SEARCH":
-      return BROWSE_STEPS;
-    case "AI_EXPAND":
-    case "AI_VERIFY":
-      return EXPLAIN_STEPS;
-    case "AI_MERGE":
-      return MERGE_STEPS;
-    case "AI_REWRITE":
-      return [{ label: "Revising draft", delay: 950 }];
-    case "AI_EXPLAIN":
-      return EXPLAIN_STEPS;
-    case "AI_SUMMARIZE":
-      return SIMPLE_STEPS;
+interface PendingCall {
+  handlers: AIHandlers;
+  /** Marks the call settled, clears the watchdog, drops the entry. */
+  finish: (fn: () => void) => void;
+}
+
+const pending = new Map<string, PendingCall>();
+let subscribed = false;
+
+/** Subscribes to "ai://event" once per page load; routes by requestId. */
+function ensureSubscribed(): void {
+  if (subscribed) return;
+  subscribed = true;
+  EventsOn("ai://event", (ev: GoAIEvent) => {
+    if (!ev || ev.requestId == null) return;
+    const call = pending.get(ev.requestId);
+    // Unknown id = already settled or cancelled: ignore late events.
+    if (!call) return;
+    switch (ev.type) {
+      case "phase":
+        call.handlers.onPhase(ev.phase ?? 0, ev.label ?? "Working");
+        break;
+      case "sources":
+        call.handlers.onBrowseSources(ev.sourceIds ?? []);
+        break;
+      case "done":
+        call.finish(() => call.handlers.onDone(parseResult(ev.payload)));
+        break;
+      case "error":
+        call.finish(() => call.handlers.onError(ev.message || "AI unavailable now."));
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+/** Parses a "done" payload into AIResult; garbage becomes an empty result
+ * (the controller renders that as "AI unavailable now", never a crash). */
+function parseResult(payload: string | undefined): AIResult {
+  if (!payload) return {};
+  try {
+    const parsed = JSON.parse(payload) as AIResult;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
-class MockAIProvider implements AIProvider {
-  readonly name = "Mock provider (built-in)";
-  readonly configured = false;
+/* ------------------------------------------------------------------ */
+/* Wails provider — the only AIProvider in the app                     */
+/* ------------------------------------------------------------------ */
+
+/** Watchdog: a call that never settles (bridge dropped events) fails
+ * loudly instead of spinning the activity strip forever. */
+const CALL_TIMEOUT_MS = 120_000;
+
+class WailsAIProvider implements AIProvider {
+  readonly name = "Gemini (Go backend)";
+  /** True when the desktop bridge exists; the Go side separately reports
+   * whether a key is configured (a missing key arrives as onError). */
+  readonly configured: boolean;
+
+  constructor() {
+    this.configured = goBridge() !== null;
+  }
 
   run(request: AIRequest, handlers: AIHandlers): () => void {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const steps = stepsFor(request);
-    let elapsed = 0;
-
-    steps.forEach((step, i) => {
-      elapsed += step.delay;
-      timers.push(
-        setTimeout(() => handlers.onPhase(i, step.label), elapsed),
-      );
-    });
-
-    timers.push(
-      setTimeout(() => {
-        try {
-          if (request.operation === "AI_SEARCH") {
-            handlers.onBrowseSources(browseResultIds());
-          }
-          const text = request.selection?.text ?? request.query ?? "";
-          switch (request.operation) {
-            case "AI_SEARCH":
-              handlers.onDone({});
-              break;
-            case "AI_EXPAND":
-              handlers.onDone({
-                explanation: expansionFor(text),
-                relatedSources: relatedSourcesFor(text),
-              });
-              break;
-            case "AI_VERIFY":
-              handlers.onDone({ explanation: verificationFor(text) });
-              break;
-            case "AI_MERGE":
-              handlers.onDone({
-                insertion: insertionFor(text, request.documentId),
-              });
-              break;
-            case "AI_REWRITE":
-              handlers.onDone({ revision: revisionFor(text) });
-              break;
-            default:
-              handlers.onDone({
-                explanation: explanationFor(text),
-                relatedSources: relatedSourcesFor(text),
-              });
-          }
-        } catch (err) {
-          handlers.onError(err instanceof Error ? err.message : "AI request failed");
-        }
-      }, elapsed + 120),
+    const app = goBridge();
+    if (!app) {
+      // Browser/mock mode: no bridge, no answers — honest error, and the
+      // async shape is preserved so callers need no special case.
+      const t = setTimeout(() => handlers.onError("AI needs the desktop app — run `wails dev`."), 0);
+      return () => clearTimeout(t);
+    }
+    ensureSubscribed();
+    const requestId = uid("aireq");
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      pending.delete(requestId);
+      fn();
+    };
+    const watchdog = setTimeout(
+      () => finish(() => handlers.onError("AI timed out — try again.")),
+      CALL_TIMEOUT_MS,
     );
-
-    return () => timers.forEach(clearTimeout);
+    pending.set(requestId, { handlers, finish });
+    // StreamAIRequest resolves when Go finishes emitting; results arrive via
+    // the event channel above, so only a transport rejection lands here.
+    // Note: cancel() drops the pending entry (late events are ignored) but
+    // cannot abort the in-flight HTTP call — Go owns that lifetime.
+    app
+      .StreamAIRequest({
+        operation: request.operation,
+        query: request.query,
+        documentId: request.documentId,
+        sourceId: request.sourceId,
+        changeId: request.changeId,
+        selection: request.selection?.text,
+        selectionText: request.selection?.text,
+        blockId: request.selection?.blockId,
+        requestId,
+      })
+      .catch((e: unknown) =>
+        finish(() => handlers.onError(e instanceof Error ? e.message : "AI request failed to start.")),
+      );
+    return () => finish(() => undefined);
   }
 }
 
@@ -141,12 +185,14 @@ class MockAIProvider implements AIProvider {
 /* Provider registry                                                   */
 /* ------------------------------------------------------------------ */
 
-let activeProvider: AIProvider = new MockAIProvider();
+let activeProvider: AIProvider = new WailsAIProvider();
 
 export function getAIProvider(): AIProvider {
   return activeProvider;
 }
 
+/** Override hook (tests / future providers). Production always uses the
+ * Wails provider above. */
 export function setAIProvider(provider: AIProvider): void {
   activeProvider = provider;
 }

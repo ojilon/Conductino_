@@ -1,8 +1,10 @@
 # Lumen — AI integration
 
-> **Where do I plug in the real AI API?** → implement `AIProvider` in
-> `src/services/ai.ts` and call `setAIProvider(...)`. That is the entire
-> contract. Nothing else in the app changes.
+> **Where does the real AI live?** → `backend/services/ai.go`
+> (`GeminiAIService`, key from `GEMINI_API_KEY` env or git-ignored
+> `backend/.ai.env`). The frontend calls it through `WailsAIProvider`
+> (`src/services/ai.ts` → `App.StreamAIRequest` → `"ai://event"`).
+> Nothing else in the app changes.
 
 ## The contract
 
@@ -37,49 +39,37 @@ The handlers are **already wired to state** in `src/state/aiController.ts`:
 phases update the progress steps + activity message; results update the
 reading companion, propose `DocumentChange`s, or revise pending changes.
 
-## Plug-in steps (real API, frontend-side)
+## Key setup (do this once, by hand)
 
-1. Create `src/services/ai/openai.ts` (or `anthropic.ts`, `ollama.ts`):
+1. Open `backend/.ai.env` (created from the checked-in template; the filled
+   file is git-ignored, never committed).
+2. Paste the Gemini key: `GEMINI_API_KEY=<key>`.
+   (A live `GEMINI_API_KEY` env var works too and wins over the file.)
+3. Restart `wails dev`. Settings → AI provider shows "Gemini (Go backend)".
+   With no key, every AI action fails loudly ("AI key missing…") — no mock
+   answers, anywhere.
 
-   ```ts
-   class OpenAIProvider implements AIProvider {
-     readonly name = "OpenAI (gpt-… )";
-     readonly configured = true;
-     constructor(private apiKey: string, private model: string) {}
-     run(req: AIRequest, h: AIHandlers): () => void {
-       // 1. translate AIRequest → provider call (fetch / SDK)
-       // 2. stream tokens; call h.onPhase(i, label) at coarse steps
-       //    (keep the 5 browse phases for AI_SEARCH; they map 1:1 to UI)
-       // 3. h.onDone({ explanation | insertion | revision | relatedSources })
-       // 4. return a function that aborts the request
-     }
-   }
-   ```
+## Go-side provider (live)
 
-2. At startup (`src/main.tsx` or `App.tsx`):
-   `setAIProvider(new OpenAIProvider(key, model))` when a key is configured,
-   otherwise leave the `MockAIProvider` in place (current behavior).
+`backend/services/ai.go` implements `AIService` as `GeminiAIService`
+(stdlib `net/http` against `generateContent`, model in
+`defaultGeminiModel`): `Run(ctx, req, sink)` emits `phase` progress, then
+exactly one terminal event — `done` with JSON `{ explanation | insertion |
+revision }`, or `error` with a display-safe message. The key travels only in
+the request header and never appears in logs or messages.
+`App.StreamAIRequest` (`frontend/app.go`) emits those events to the frontend
+(`ai://event`); `WailsAIProvider` (`src/services/ai.ts`) demultiplexes them
+back to the caller by `requestId`.
 
-3. Key storage: read from the Go side (`backend/services/ai.go`) so the key
-   never lives in frontend code — the Go `AIService` can own config + auth.
+Status: WIRED. All `aiController.ts` runners go through the Go provider.
+`AI_SEARCH` (browser web search) has no backing service and returns an
+`error` event by design — the browse panel shows it, nothing is fabricated.
 
-## Go-side provider (alternative or companion)
-
-`backend/services/ai.go` defines the same boundary in Go:
-`AIService.Run(ctx, req, sink)` with `AIEvent { phase | sources | done | error }`.
-`App.StreamAIRequest` (`frontend/app.go`) emits those events to the frontend (`ai://event`).
-A frontend provider can be a thin wrapper over that event stream — useful
-when the model runs locally (Ollama) or the key must stay server-side.
-
-Status: STAGED, NOT WIRED. No TS code calls `StreamAIRequest` and nothing
-listens for `ai://event` — `aiController.ts` uses the TS `AIProvider`
-exclusively. Wiring it is future work, not a bug.
-
-Boundary mismatch to fix when wiring (do not paper over): Go
-`AIRequest.Selection` is a plain `string` (`backend/models/models.go`), while
-TS `AIRequest.selection` is `{ blockId, text }` (`domain.ts`). The shapes must
-be reconciled at the boundary — either extend the Go struct or flatten on the
-TS side — before a Go provider can receive selections intact.
+Boundary note (resolved, do not regress): TS `AIRequest.selection` is
+`{ blockId, text }` (`domain.ts`); Go receives it flattened as
+`SelectionText`/`BlockID` (`backend/models/models.go`), translated by
+`WailsAIProvider`. `RequestID` on request and every event correlates
+concurrent calls on the shared channel.
 
 ## What each operation must produce
 
@@ -108,10 +98,11 @@ Every `run()` starts with a `AIActivity` record (`state/aiController.ts` →
 - *What did it propose?* → `activity.changeIds` → `state.changes`.
 - *History?* → `state.aiActivities` (newest first) — surfaced in the AI Reading panel.
 
-## Mock behavior (today)
+## Failure policy (no mock fallback)
 
-`MockAIProvider` (same file) simulates streaming with timed phases
-(~3.5 s for browse) and returns canned research answers from
-`src/mock/aiContent.ts`. The UI is written to be indistinguishable from a
-real provider — replacing the mock must not require touching any feature
-file.
+There is no mock provider anymore. Missing key, network failure, empty model
+response, unknown operation, and browser-mode use (no desktop bridge) all
+reach the UI as `onError`, rendered where the answer was expected
+("AI unavailable now." / explicit toasts) — see `aiController.ts`. The
+seeded demo documents in `src/mock/data.ts` are untouched startup content,
+not an AI fallback.

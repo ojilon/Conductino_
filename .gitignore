@@ -1,4 +1,8 @@
 build/bin
 frontend/node_modules/
 frontend/dist
+# Local AI keys — never committed. The Go backend reads backend/.ai.env
+# (or the GEMINI_API_KEY env var); see backend/.ai.env for the template.
+backend/.ai.env
+*.env
 

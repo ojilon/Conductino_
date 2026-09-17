@@ -51,11 +51,10 @@ Domain state lives in `AppState` and mutates only via dispatched actions — wit
 │       │   ├── appState.tsx             Reducer + context + selectors
 │       │   └── aiController.ts         Run AI operations, stream into state
 │       ├── services/
-│       │   ├── ai.ts                    AIProvider registry + MockAIProvider
+│       │   ├── ai.ts                    WailsAIProvider (Go/Gemini via StreamAIRequest)
 │       │   └── backend.ts               Service interfaces + mocks + Wails impls
 │       ├── mock/
-│       │   ├── data.ts                  Sessions, documents, sources, changes, file tree
-│       │   └── aiContent.ts            Mock AI response templates
+│       │   └── data.ts                  Sessions, documents, sources, changes, file tree
 │       ├── components/                  icons.tsx, ui.tsx (Button/Menu/Modal/ResizablePanel/…)
 │       └── features/
 │           ├── browser/                 BrowserMode, WorkspaceSidebar, BrowserChrome,

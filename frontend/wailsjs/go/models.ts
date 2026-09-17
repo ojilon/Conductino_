@@ -7,6 +7,9 @@ export namespace models {
 	    sourceId?: string;
 	    changeId?: string;
 	    selection?: string;
+	    selectionText?: string;
+	    blockId?: string;
+	    requestId?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AIRequest(source);
@@ -20,6 +23,9 @@ export namespace models {
 	        this.sourceId = source["sourceId"];
 	        this.changeId = source["changeId"];
 	        this.selection = source["selection"];
+	        this.selectionText = source["selectionText"];
+	        this.blockId = source["blockId"];
+	        this.requestId = source["requestId"];
 	    }
 	}
 	export class FileTreeNode {

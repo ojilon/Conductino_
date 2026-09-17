@@ -15,8 +15,9 @@
 | Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
-| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING boundary / MOCKED provider** | `src/services/ai.ts` |
-| AI responses (explanations, insertions, revisions, ranking) | **MOCKED** | `src/mock/aiContent.ts` |
+| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini via Go; key in `backend/.ai.env`) | `src/services/ai.ts`, `backend/services/ai.go` |
+| AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/services/ai.go` |
+| AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
 | Selection → AI action workflow | **WORKING** (block-level precision) | `DocumentView.tsx` |
 | Highlights / saved notes | **WORKING** (block-anchored) | `doc.highlight.add` |
 | Summary document editing | **BASIC WORKING** (plain text, contentEditable) | `SummaryDocumentView.tsx` |

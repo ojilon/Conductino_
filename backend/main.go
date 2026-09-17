@@ -48,16 +48,17 @@ type AIEventSink = services.AIEventSink
 //     exposes an interface + a mock implementation, so a real implementation
 //     (SQLite, real AI provider) can be swapped in without touching callers.
 type Backend struct {
-	// One field per submodule — the "bridge" wiring. Concrete mock types
-	// run today; switch a field to its interface (e.g. StorageService) when
-	// a real implementation lands, without changing any method signatures.
+	// One field per submodule — the "bridge" wiring. Services that still
+	// have only one implementation keep their concrete type (e.g. Storage);
+	// AI is held as the AIService interface so providers swap without
+	// touching callers.
 	// NOTE: the Filesystem instance is shared — Workspace composes this same
 	// instance for the library tree, so the dialog, the tree, reveals and
 	// file opens can never disagree about which folder is current.
 	fs      *services.Filesystem      // OS capability: walk, resolve, reveal-in-folder
 	storage *services.InMemoryStorage // persistence (memory today, SQLite tomorrow)
 	docs    *services.Documents       // format extraction (PDF/DOCX/HTML/TXT → blocks)
-	ai      *services.MockAIService   // model access (offline mock; real provider later)
+	ai      services.AIService        // model access: Gemini via backend/services/ai.go
 	work    *services.Workspace       // library tree + sessions / saved sources / summary docs
 }
 

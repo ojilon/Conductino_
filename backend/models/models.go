@@ -93,21 +93,36 @@ const (
 	OpVerify    AIOperation = "AI_VERIFY"
 )
 
-// AIRequest is the wire shape of an AI operation (mirrors types/domain.ts).
+// AIRequest is the wire shape of an AI operation (mirrors TS AIRequest in
+// frontend/src/types/domain.ts, translated by the WailsAIProvider in
+// frontend/src/services/ai.ts). TS `selection` is an object
+// `{ blockId, text }`; it arrives here flattened into SelectionText/BlockID
+// (Selection keeps the plain text for backward compatibility).
 type AIRequest struct {
-	Operation  string `json:"operation"`
-	Query      string `json:"query,omitempty"`
-	DocumentID string `json:"documentId,omitempty"`
-	SourceID   string `json:"sourceId,omitempty"`
-	ChangeID   string `json:"changeId,omitempty"`
-	Selection  string `json:"selection,omitempty"`
+	Operation     string `json:"operation"`
+	Query         string `json:"query,omitempty"`
+	DocumentID    string `json:"documentId,omitempty"`
+	SourceID      string `json:"sourceId,omitempty"`
+	ChangeID      string `json:"changeId,omitempty"`
+	Selection     string `json:"selection,omitempty"`
+	SelectionText string `json:"selectionText,omitempty"`
+	BlockID       string `json:"blockId,omitempty"`
+	// RequestID correlates events back to the originating call: every AIEvent
+	// the backend emits for this request echoes it, so concurrent requests
+	// never cross-talk on the shared "ai://event" channel.
+	RequestID string `json:"requestId,omitempty"`
 }
 
-// AIEvent is one streaming unit emitted to the frontend.
+// AIEvent is one streaming unit emitted to the frontend over "ai://event".
 type AIEvent struct {
 	Type      string   `json:"type"` // "phase" | "sources" | "done" | "error"
+	RequestID string   `json:"requestId,omitempty"`
 	Phase     int      `json:"phase,omitempty"`
 	Label     string   `json:"label,omitempty"`
 	SourceIDs []string `json:"sourceIds,omitempty"`
-	Payload   string   `json:"payload,omitempty"`
+	// Payload carries the JSON-encoded result on "done" (keys: explanation,
+	// insertion {text, citation}, revision, relatedSources[]).
+	Payload string `json:"payload,omitempty"`
+	// Message carries the human-readable failure reason on "error".
+	Message string `json:"message,omitempty"`
 }

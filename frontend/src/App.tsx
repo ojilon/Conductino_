@@ -171,7 +171,7 @@ function SettingsDialog() {
           name="AI provider"
           status={provider.configured ? "Connected" : "Mock service"}
           tone={provider.configured ? "ok" : "mock"}
-          note={`Active: ${provider.name}. Swap in a real provider in src/services/ai.ts (setAIProvider) — the rest of the app is unchanged. docs/ai-integration.md`}
+          note={`Active: ${provider.name}. The key lives in Go only (GEMINI_API_KEY env or git-ignored backend/.ai.env) — the frontend never sees it. docs/ai-integration.md`}
         />
         <Row
           icon="layers"
