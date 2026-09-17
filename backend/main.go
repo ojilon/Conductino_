@@ -58,7 +58,7 @@ type Backend struct {
 	fs      *services.Filesystem      // OS capability: walk, resolve, reveal-in-folder
 	storage *services.InMemoryStorage // persistence (memory today, SQLite tomorrow)
 	docs    *services.Documents       // format extraction (PDF/DOCX/HTML/TXT → blocks)
-	ai      services.AIService        // model access: Gemini via backend/services/ai.go
+	ai      services.AIService        // model access: Gemini via backend/services/ai/ (shim: services.NewAI)
 	work    *services.Workspace       // library tree + sessions / saved sources / summary docs
 }
 
