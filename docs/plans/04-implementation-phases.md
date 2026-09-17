@@ -29,8 +29,16 @@ Each phase should leave the app shippable (no broken reader).
 **Note:** Threads live in AppState for now. Phase 6 stores chat in SQLite.
 
 ## Phase 5 — Harness tools (folder-scoped)
-- Tool registry + Resolve guards
-- list_workspace, read_source, read_summary, propose_summary_edit
+**Goal:** AI_CHAT can list/read workspace files and propose summary edits under Resolve guards.
+
+- [x] Tool registry + parse (`tools.go`) — list_workspace, read_source, read_summary, propose_summary_edit
+- [x] Resolve + extension guards; no shell; size caps
+- [x] Chat tool loop max 2 rounds (`chat.go`); phase labels for tools
+- [x] Wire `NewAI(fs, docs)` from Backend
+- [x] Frontend: summary snapshot on chat request; insertion → DocumentChange
+- [x] Unit tests for parse + path rejection
+
+**Exit:** chat can list tree / read .txt|.md under the open folder; summary proposals still require user accept.
 
 ## Phase 6 — Storage: SQLite as system of record
 
