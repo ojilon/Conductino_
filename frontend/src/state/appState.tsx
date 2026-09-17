@@ -106,5 +106,6 @@ export {
   DEMO_WORKSPACE_ID,
   activeWorkspace,
   primarySummaryDocument,
+  summariesNearDocument,
   workspaceIdFromRoot,
 } from "./selectors";
