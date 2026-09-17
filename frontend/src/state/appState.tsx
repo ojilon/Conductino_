@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AppState } from "../types/domain";
-import { createInitialState } from "../mock/data";
+import { createInitialState as mockInitialState } from "../mock/data";
 import type { Action } from "./actions";
 import { reducePart1a } from "./reducePart1a";
 import { reducePart1b } from "./reducePart1b";
@@ -27,6 +27,25 @@ import { reducePart4 } from "./reducePart4";
 import { reduceWorkspace } from "./reduceWorkspace";
 
 export type { Action } from "./actions";
+
+/** Ensure mock seed has workspace (Phase 2) until data.ts is fully retagged. */
+function createInitialState(): AppState {
+  const s = mockInitialState() as AppState;
+  if (!s.workspace?.byId) {
+    s.workspace = {
+      activeId: "ws-demo",
+      byId: {
+        "ws-demo": {
+          id: "ws-demo",
+          rootPath: null,
+          primarySummaryId: "doc-summ",
+          label: "Demo research workspace",
+        },
+      },
+    };
+  }
+  return s;
+}
 
 function reducer(state: AppState, action: Action): AppState {
   return (
