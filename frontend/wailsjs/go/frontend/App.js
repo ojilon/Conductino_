@@ -97,3 +97,7 @@ export function StreamAIRequest(arg1) {
 export function WorkspaceID() {
   return window['go']['frontend']['App']['WorkspaceID']();
 }
+
+export function WriteSummaryDOCX(arg1, arg2) {
+  return window['go']['frontend']['App']['WriteSummaryDOCX'](arg1, arg2);
+}

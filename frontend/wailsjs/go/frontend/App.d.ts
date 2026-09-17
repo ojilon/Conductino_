@@ -50,3 +50,5 @@ export function StorageEngine():Promise<string>;
 export function StreamAIRequest(arg1:models.AIRequest):Promise<void>;
 
 export function WorkspaceID():Promise<string>;
+
+export function WriteSummaryDOCX(arg1:string,arg2:string):Promise<string>;
