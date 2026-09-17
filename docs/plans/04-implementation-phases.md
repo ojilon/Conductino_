@@ -37,5 +37,11 @@ Each phase should leave the app shippable (no broken reader).
 - [x] Unit tests (memory + sqlite)
 
 ## Phase 7 — Slate adapter for summary
+- [x] `toSlate` / `fromSlate` in `frontend/src/features/reader/slateAdapter.ts`
+- [x] Summary view uses Slate (slate-react); block/segment remains canonical
+- [x] `doc.blocks.replace` action for full sync on editor change
+- [x] Pending AI insert/modify still card-based; accept re-hydrates editor
+- [x] Marks: strong / em / highlightId round-trip through adapter
+- [x] Never persist Slate JSON — only DocumentBlock[]
 
 ## Phase 8 — DOCX summary file + richer sources

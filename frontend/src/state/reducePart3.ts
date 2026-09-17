@@ -28,6 +28,12 @@ export function reducePart3(state: AppState, action: Action): AppState | null {
         ),
       }));
 
+    case "doc.blocks.replace":
+      return patchDoc(state, action.documentId, (doc) => ({
+        ...doc,
+        blocks: action.blocks,
+      }));
+
     case "doc.title":
       return patchDoc(state, action.documentId, (doc) => ({
         ...doc,

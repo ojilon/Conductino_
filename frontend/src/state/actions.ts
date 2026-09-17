@@ -49,6 +49,7 @@ export type Action =
   | { type: "doc.add"; document: AppState["documents"][ID] }
   | { type: "source.add"; source: AppState["sources"][ID] }
   | { type: "doc.block.text"; documentId: ID; blockId: ID; text: string }
+  | { type: "doc.blocks.replace"; documentId: ID; blocks: DocumentBlock[] }
   | { type: "doc.title"; documentId: ID; text: string }
   | { type: "doc.highlight.add"; documentId: ID; highlight: Highlight }
   | { type: "change.propose"; change: DocumentChange; block?: DocumentBlock; afterBlockId?: ID }
