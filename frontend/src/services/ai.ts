@@ -40,6 +40,10 @@ interface GoAIRequest {
   selectionText?: string;
   blockId?: string;
   requestId?: string;
+  workspaceId?: string;
+  customPrompt?: string;
+  includeDocumentContext?: boolean;
+  contextPack?: string;
 }
 
 interface GoAIEvent {
@@ -99,36 +103,27 @@ function ensureSubscribed(): void {
       case "error":
         call.finish(() => call.handlers.onError(ev.message || "AI unavailable now."));
         break;
-      default:
-        break;
     }
   });
 }
 
-/** Parses a "done" payload into AIResult; garbage becomes an empty result
- * (the controller renders that as "AI unavailable now", never a crash). */
-function parseResult(payload: string | undefined): AIResult {
+function parseResult(payload?: string): AIResult {
   if (!payload) return {};
   try {
-    const parsed = JSON.parse(payload) as AIResult;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return JSON.parse(payload) as AIResult;
   } catch {
     return {};
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Wails provider — the only AIProvider in the app                     */
-/* ------------------------------------------------------------------ */
+const CALL_TIMEOUT_MS = 90_000;
 
-/** Watchdog: a call that never settles (bridge dropped events) fails
- * loudly instead of spinning the activity strip forever. */
-const CALL_TIMEOUT_MS = 120_000;
+/* ------------------------------------------------------------------ */
+/* WailsAIProvider                                                     */
+/* ------------------------------------------------------------------ */
 
 class WailsAIProvider implements AIProvider {
-  readonly name = "Gemini (Go backend)";
-  /** True when the desktop bridge exists; the Go side separately reports
-   * whether a key is configured (a missing key arrives as onError). */
+  readonly name = "wails-gemini";
   readonly configured: boolean;
 
   constructor() {
@@ -138,8 +133,6 @@ class WailsAIProvider implements AIProvider {
   run(request: AIRequest, handlers: AIHandlers): () => void {
     const app = goBridge();
     if (!app) {
-      // Browser/mock mode: no bridge, no answers — honest error, and the
-      // async shape is preserved so callers need no special case.
       const t = setTimeout(() => handlers.onError("AI needs the desktop app — run `wails dev`."), 0);
       return () => clearTimeout(t);
     }
@@ -158,10 +151,6 @@ class WailsAIProvider implements AIProvider {
       CALL_TIMEOUT_MS,
     );
     pending.set(requestId, { handlers, finish });
-    // StreamAIRequest resolves when Go finishes emitting; results arrive via
-    // the event channel above, so only a transport rejection lands here.
-    // Note: cancel() drops the pending entry (late events are ignored) but
-    // cannot abort the in-flight HTTP call — Go owns that lifetime.
     app
       .StreamAIRequest({
         operation: request.operation,
@@ -172,6 +161,10 @@ class WailsAIProvider implements AIProvider {
         selection: request.selection?.text,
         selectionText: request.selection?.text,
         blockId: request.selection?.blockId,
+        workspaceId: request.workspaceId,
+        customPrompt: request.customPrompt,
+        includeDocumentContext: request.includeDocumentContext,
+        contextPack: request.contextPack,
         requestId,
       })
       .catch((e: unknown) =>
