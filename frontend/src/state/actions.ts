@@ -6,7 +6,6 @@ import type {
   AppMode,
   AppState,
   BrowserUIState,
-  Document,
   DocumentBlock,
   DocumentChange,
   Highlight,

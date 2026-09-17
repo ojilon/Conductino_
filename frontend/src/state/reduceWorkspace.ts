@@ -1,7 +1,7 @@
 /**
  * Workspace session reducer cases (Phase 2).
  */
-import type { AppState, WorkspaceSession, ID } from "../types/domain";
+import type { AppState, WorkspaceSession } from "../types/domain";
 import type { Action } from "./actions";
 
 export function reduceWorkspace(state: AppState, action: Action): AppState | null {
