@@ -115,7 +115,8 @@ export type AIOperation =
   | "AI_EXPAND"
   | "AI_MERGE"
   | "AI_REWRITE"
-  | "AI_VERIFY";
+  | "AI_VERIFY"
+  | "AI_CHAT";
 
 export type AIStatus = "running" | "completed" | "error";
 
@@ -149,6 +150,12 @@ export interface AIActivity {
   error?: string;
 }
 
+/** One prior turn for multi-turn chat (Phase 4). */
+export interface ChatTurn {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 export interface AIRequest {
   operation: AIOperation;
   query?: string;
@@ -167,6 +174,10 @@ export interface AIRequest {
    * frontend while blocks live in AppState; backend appends to the prompt.
    */
   contextPack?: string;
+  /** Phase 4: prior turns (current user message is query / customPrompt). */
+  messageHistory?: ChatTurn[];
+  /** "oneshot" | "chat" — hint for prompt assembly. */
+  mode?: "oneshot" | "chat";
 }
 
 /** What a provider can produce back to the app. */
@@ -199,6 +210,38 @@ export interface AIProvider {
   /** Runs the request, streaming phases; returns a cancel function. */
   run(request: AIRequest, handlers: AIHandlers): () => void;
 }
+
+/* ------------------------------------------------------------------ */
+/* Chat (Phase 4 — in-memory; SQLite in Phase 6)                       */
+/* ------------------------------------------------------------------ */
+
+export type ChatRole = "user" | "assistant" | "system";
+
+export interface ChatMessage {
+  id: ID;
+  role: ChatRole;
+  content: string;
+  createdAt: number;
+  /** Optional link to the document that was in focus when sent. */
+  documentId?: ID;
+}
+
+/**
+ * One conversation thread, scoped to a workspace (and optionally a document).
+ * Threads live in AppState for Phase 4; Phase 6 persists to SQLite.
+ */
+export interface ChatThread {
+  id: ID;
+  workspaceId: ID;
+  /** When set, the thread is tied to a specific open document. */
+  documentId?: ID;
+  title?: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AiPanelTab = "chat" | "reading";
 
 /* ------------------------------------------------------------------ */
 /* Documents                                                           */
@@ -323,6 +366,8 @@ export interface ReaderUIState {
   railView: RailView;
   aiPanelOpen: boolean;
   aiPanelWidth: number;
+  /** Phase 4: which face of the AI panel is visible. */
+  aiPanelTab: AiPanelTab;
   /** AI Reading companion payload for the current document. */
   companion: {
     documentId: ID;
@@ -381,6 +426,14 @@ export interface AppState {
   workspace: {
     activeId: ID | null;
     byId: Record<ID, WorkspaceSession>;
+  };
+  /**
+   * Phase 4 chat threads (in-memory). activeId is the thread currently
+   * shown in the Chat face; byId is keyed by thread id.
+   */
+  chat: {
+    activeId: ID | null;
+    byId: Record<ID, ChatThread>;
   };
   sources: Record<ID, Source>;
   documents: Record<ID, Document>;
