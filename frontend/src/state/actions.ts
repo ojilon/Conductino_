@@ -13,6 +13,8 @@ import type {
   ReaderUIState,
   TextSelection,
   WorkspaceSession,
+  ChatMessage,
+  ChatThread,
 } from "../types/domain";
 
 export type Action =
@@ -66,6 +68,11 @@ export type Action =
       label: string;
       setPrimary?: boolean;
     }
+  // chat (Phase 4)
+  | { type: "chat.ensure"; thread: ChatThread }
+  | { type: "chat.setActive"; id: ID }
+  | { type: "chat.append"; threadId: ID; message: ChatMessage }
+  | { type: "chat.clear"; threadId: ID }
   // selection / toast / settings
   | { type: "selection.set"; selection: TextSelection | null }
   | { type: "toast"; message: string | null }

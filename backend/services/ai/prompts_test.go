@@ -51,3 +51,23 @@ func TestBuildPromptUnknownOp(t *testing.T) {
 		t.Fatalf("expected empty, got %q %v %d", p, k, n)
 	}
 }
+
+func TestBuildPromptChatIncludesHistory(t *testing.T) {
+	req := models.AIRequest{
+		Query: "What is chemiosmosis?",
+		MessageHistory: []models.ChatTurn{
+			{Role: "user", Content: "Hi"},
+			{Role: "assistant", Content: "Hello"},
+		},
+	}
+	prompt, kind, tokens := buildPrompt(models.OpChat, req)
+	if prompt == "" || kind != kindExplanation || tokens <= 0 {
+		t.Fatalf("bad: %q %v %d", prompt, kind, tokens)
+	}
+	if !strings.Contains(prompt, "What is chemiosmosis?") {
+		t.Fatal("current query missing")
+	}
+	if !strings.Contains(prompt, "Hello") {
+		t.Fatal("history missing")
+	}
+}
