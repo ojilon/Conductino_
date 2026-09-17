@@ -381,6 +381,14 @@ export interface ReaderUIState {
     /** Related sources returned by the provider with the explanation. */
     relatedSources?: { title: string; meta: string }[];
   } | null;
+  /**
+   * When "include in summary" finds multiple summary targets in the same
+   * folder/workspace, the UI asks which one to use.
+   */
+  summaryPick: {
+    selection: { documentId: ID; blockId: ID; text: string };
+    candidates: { id: ID; title: string }[];
+  } | null;
 }
 
 export interface ReaderState {
