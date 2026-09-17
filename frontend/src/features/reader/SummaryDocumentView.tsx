@@ -5,6 +5,8 @@
  * DocumentBlock[]; toSlate / fromSlate are the sole conversion boundary.
  * Pending AI inserts/modifies still render as cards/decorations until
  * accept/reject merges them into blocks and re-hydrates the editor.
+ *
+ * Phase 8: Save DOCX writes blocks to summaries/*.docx under the workspace.
  */
 
 import { useCallback, useMemo, type ReactNode } from "react";
@@ -24,6 +26,7 @@ import {
 } from "slate-react";
 import { withHistory, type HistoryEditor } from "slate-history";
 import { useApp, pendingChangesFor } from "../../state/appState";
+import { writeSummaryDOCX } from "../../services/backend";
 import type { Document, DocumentBlock, DocumentChange, ID } from "../../types/domain";
 import { Icon } from "../../components/icons";
 import { Badge } from "../../components/ui";
@@ -213,7 +216,7 @@ function SummarySlateEditor({
 }
 
 export default function SummaryDocumentView({ doc }: { doc: Document }) {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const pending = pendingChangesFor(state, doc.id);
   const changeByBlock = new Map(pending.map((c) => [c.blockId, c]));
 
@@ -227,10 +230,37 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
     return !(ch && ch.type === "insert" && ch.status === "pending");
   });
 
+  const saveDocx = async () => {
+    const blocksJSON = JSON.stringify({ blocks: doc.blocks });
+    try {
+      const path = await writeSummaryDOCX(blocksJSON);
+      if (path) {
+        dispatch({ type: "toast", message: `Saved summary DOCX · ${path}` });
+      } else {
+        dispatch({ type: "toast", message: "DOCX save needs the desktop app (Wails)." });
+      }
+    } catch (e) {
+      dispatch({
+        type: "toast",
+        message: `DOCX save failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[700px] px-8 py-6">
       <div className="mb-4 flex items-center justify-between border-b border-line pb-2.5 text-[12px] text-mute">
-        <span>Editable summary · Slate · {doc.sourceIds?.length ?? 0} sources</span>
+        <span className="flex items-center gap-3">
+          <span>Editable summary · Slate · {doc.sourceIds?.length ?? 0} sources</span>
+          <button
+            type="button"
+            onClick={() => void saveDocx()}
+            className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] font-medium text-ink-700 hover:border-moss-300 hover:text-moss-700"
+            title="Write summary as .docx under the workspace (summaries/)"
+          >
+            Save DOCX
+          </button>
+        </span>
         <span className="flex items-center gap-1.5">
           <span className={cn("h-1.5 w-1.5 rounded-full", pending.length ? "bg-hay-300" : "bg-moss-200")} />
           {pending.length
