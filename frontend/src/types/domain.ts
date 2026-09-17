@@ -178,6 +178,10 @@ export interface AIRequest {
   messageHistory?: ChatTurn[];
   /** "oneshot" | "chat" — hint for prompt assembly. */
   mode?: "oneshot" | "chat";
+  /** Phase 5: truncated plain-text summary for read_summary tool. */
+  summaryContent?: string;
+  /** Phase 5: primary summary document id for propose_summary_edit. */
+  primarySummaryId?: ID;
 }
 
 /** What a provider can produce back to the app. */
