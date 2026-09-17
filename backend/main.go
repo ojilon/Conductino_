@@ -3,6 +3,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -147,6 +148,31 @@ func (b *Backend) RunAI(ctx context.Context, req models.AIRequest, sink AIEventS
 
 func (b *Backend) SetPrimarySummary(summaryID string) error {
 	return b.work.SetPrimarySummary(summaryID)
+}
+
+// WriteSummaryDOCX writes canonical blocks as a .docx under the library root.
+// relPath is workspace-relative (e.g. "summaries/My-Paper.docx"); empty uses
+// DefaultSummaryDOCXName from the first heading/title in blocksJSON.
+// Returns the absolute path written.
+func (b *Backend) WriteSummaryDOCX(relPath, blocksJSON string) (string, error) {
+	root := b.work.LibraryRoot()
+	if root == "" {
+		return "", fmt.Errorf("no library root set")
+	}
+	if relPath == "" {
+		title := "summary"
+		if blocks, err := services.ParseBlocksJSON(blocksJSON); err == nil && len(blocks) > 0 {
+			t := ""
+			for _, s := range blocks[0].Segments {
+				t += s.Text
+			}
+			if t != "" {
+				title = t
+			}
+		}
+		relPath = services.DefaultSummaryDOCXName(title)
+	}
+	return b.docs.WriteSummaryDOCX(root, relPath, blocksJSON)
 }
 
 func (b *Backend) SaveDocument(doc services.DocumentRecord) error {
