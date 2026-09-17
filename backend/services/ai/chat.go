@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -79,14 +80,9 @@ func encodeChatWithInsertion(explanation, insertText string) string {
 		Explanation: strings.TrimSpace(explanation),
 		Insertion:   &aiInsertion{Text: strings.TrimSpace(insertText), Citation: "(AI draft)"},
 	}
-	b, err := jsonMarshal(res)
+	b, err := json.Marshal(res)
 	if err != nil {
 		return encodeResult(kindExplanation, explanation)
 	}
 	return string(b)
-}
-
-// jsonMarshal is a thin alias so chat.go can stay free of encoding/json import noise in tests.
-var jsonMarshal = func(v any) ([]byte, error) {
-	return jsonMarshalImpl(v)
 }
