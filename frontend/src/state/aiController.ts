@@ -12,6 +12,7 @@
 
 import { useCallback, useRef } from "react";
 import { useApp, activeReaderDocument, primarySummaryDocument, activeWorkspace } from "./appState";
+import { buildContextPack } from "./contextPack";
 import { getAIProvider } from "../services/ai";
 import { uid } from "../utils/helpers";
 import type { AIActivity, AIOperation } from "../types/domain";
@@ -79,17 +80,33 @@ export function useAIRunners() {
   /* ---------- Explanation family (selection → companion panel) ---------- */
 
   const runExplain = useCallback(
-    (operation: AIOperation, selection: SelectionRef) => {
+    (operation: AIOperation, selection: SelectionRef, customPrompt?: string) => {
       const doc = state.documents[selection.documentId];
       const meta = doc?.metadata;
-      const sourceLabel = meta?.author ? `${meta.author}${meta.year ? ` (${meta.year})` : ""}${meta.venue ? `, ${meta.venue}` : ""}` : "Open document";
+      const sourceLabel = meta?.author
+        ? `${meta.author}${meta.year ? ` (${meta.year})` : ""}${meta.venue ? `, ${meta.venue}` : ""}`
+        : "Open document";
+      const wsId = activeWorkspace(state)?.id ?? doc?.workspaceId;
+      const contextPack = buildContextPack(doc, {
+        blockId: selection.blockId,
+        text: selection.text,
+      });
       const id = start(operation, {
         documentId: selection.documentId,
+        workspaceId: wsId,
         selection: selection.text,
         message: "Reading selection…",
       });
       cancels.current[id] = getAIProvider().run(
-        { operation, documentId: selection.documentId, selection: { blockId: selection.blockId, text: selection.text } },
+        {
+          operation,
+          documentId: selection.documentId,
+          selection: { blockId: selection.blockId, text: selection.text },
+          workspaceId: wsId,
+          customPrompt: customPrompt?.trim() || undefined,
+          includeDocumentContext: true,
+          contextPack: contextPack || undefined,
+        },
         {
           onPhase: (_i, label) =>
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
@@ -129,15 +146,13 @@ export function useAIRunners() {
         },
       );
     },
-    [state.documents, start, finish, dispatch],
+    [state, start, finish, dispatch],
   );
 
   /* ---------- Include selection in the summary (source → summary) ---------- */
 
   const runIncludeInSummary = useCallback(
     (selection: SelectionRef) => {
-      // Phase 2: resolve via active workspace primarySummaryId — never
-      // Object.values(documents).find(kind===summary) (first-summary-wins).
       const summary = primarySummaryDocument(state);
       if (!summary) {
         dispatch({
@@ -156,8 +171,20 @@ export function useAIRunners() {
         selection: selection.text,
         message: "Extracting claim…",
       });
+      const contextPack = buildContextPack(sourceDoc, {
+        blockId: selection.blockId,
+        text: selection.text,
+      });
       cancels.current[id] = getAIProvider().run(
-        { operation: "AI_MERGE", documentId: selection.documentId, sourceId, selection: { blockId: selection.blockId, text: selection.text } },
+        {
+          operation: "AI_MERGE",
+          documentId: selection.documentId,
+          sourceId,
+          selection: { blockId: selection.blockId, text: selection.text },
+          workspaceId: wsId,
+          includeDocumentContext: true,
+          contextPack: contextPack || undefined,
+        },
         {
           onPhase: (_i, label) =>
             dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
@@ -202,7 +229,7 @@ export function useAIRunners() {
         },
       );
     },
-    [state.documents, start, finish, dispatch],
+    [state, start, finish, dispatch],
   );
 
   /* ---------- Revise a pending change ---------- */
