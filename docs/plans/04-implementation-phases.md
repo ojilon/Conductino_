@@ -45,3 +45,10 @@ Each phase should leave the app shippable (no broken reader).
 - [x] Never persist Slate JSON — only DocumentBlock[]
 
 ## Phase 8 — DOCX summary file + richer sources
+- [x] Stdlib DOCX reader (ZIP+OOXML) → blocks with bold/italic + heading styles
+- [x] Stdlib DOCX writer: blocks → minimal OOXML package under workspace
+- [x] OpenFile supports `.docx` (alongside txt/md)
+- [x] MD headings (`#`/`##`/`###`) promoted to heading blocks
+- [x] `WriteSummaryDOCX` on Backend + Wails App; path containment under library root
+- [x] Frontend `writeSummaryDOCX` + Save DOCX control on summary view
+- [x] Unit tests: round-trip, path escape rejection, default name
