@@ -15,7 +15,7 @@ import { useApp, activeReaderDocument, primarySummaryDocument, activeWorkspace }
 import { buildContextPack } from "./contextPack";
 import { getAIProvider } from "../services/ai";
 import { uid } from "../utils/helpers";
-import type { AIActivity, AIOperation } from "../types/domain";
+import type { AIActivity, AIOperation, ChatMessage, ChatThread, ChatTurn } from "../types/domain";
 
 export interface SelectionRef {
   documentId: string;
@@ -123,6 +123,8 @@ export function useAIRunners() {
                   sourceLabel,
                   relatedSources: result.relatedSources ?? [],
                 },
+                aiPanelTab: "reading",
+                aiPanelOpen: true,
               },
             });
             finish(id, { status: "completed", message: `${operation.replace("AI_", "").toLowerCase()} completed` });
@@ -138,6 +140,8 @@ export function useAIRunners() {
                   sourceLabel,
                   relatedSources: [],
                 },
+                aiPanelTab: "reading",
+                aiPanelOpen: true,
               },
             });
             finish(id, { status: "error", error: message });
@@ -297,5 +301,124 @@ export function useAIRunners() {
     );
   }, [state, start, finish, dispatch]);
 
-  return { runBrowse, runExplain, runIncludeInSummary, runRevise, runRelatedSources };
+  /* ---------- Phase 4: multi-turn chat ---------- */
+
+  /** Ensure a workspace-scoped thread exists and is active; returns its id. */
+  const ensureThread = useCallback(
+    (documentId?: string): string => {
+      const ws = activeWorkspace(state);
+      const wsId = ws?.id ?? "ws-demo";
+      // Prefer an existing thread for this workspace (+ optional document).
+      const existing = Object.values(state.chat.byId).find(
+        (t) => t.workspaceId === wsId && (documentId ? t.documentId === documentId : true),
+      );
+      if (existing) {
+        if (state.chat.activeId !== existing.id) {
+          dispatch({ type: "chat.setActive", id: existing.id });
+        }
+        return existing.id;
+      }
+      const now = Date.now();
+      const thread: ChatThread = {
+        id: uid("thr"),
+        workspaceId: wsId,
+        documentId,
+        title: "Research chat",
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      dispatch({ type: "chat.ensure", thread });
+      return thread.id;
+    },
+    [state, dispatch],
+  );
+
+  const runChat = useCallback(
+    (text: string, opts?: { documentId?: string; includeContext?: boolean }) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const doc = opts?.documentId
+        ? state.documents[opts.documentId]
+        : activeReaderDocument(state);
+      const documentId = doc?.id;
+      const wsId = activeWorkspace(state)?.id ?? doc?.workspaceId;
+      const threadId = ensureThread(documentId);
+
+      const userMsg: ChatMessage = {
+        id: uid("msg"),
+        role: "user",
+        content: trimmed,
+        createdAt: Date.now(),
+        documentId,
+      };
+      dispatch({ type: "chat.append", threadId, message: userMsg });
+      dispatch({ type: "reader.ui", patch: { aiPanelTab: "chat", aiPanelOpen: true } });
+
+      // History = prior messages only (exclude the one we just appended).
+      const thread = state.chat.byId[threadId];
+      const prior: ChatTurn[] = (thread?.messages ?? []).map((m) => ({
+        role: m.role === "system" ? "system" : m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      }));
+
+      const contextPack =
+        opts?.includeContext !== false && doc
+          ? buildContextPack(doc, undefined)
+          : undefined;
+
+      const id = start("AI_CHAT", {
+        documentId,
+        workspaceId: wsId,
+        message: "Thinking…",
+      });
+
+      cancels.current[id] = getAIProvider().run(
+        {
+          operation: "AI_CHAT",
+          query: trimmed,
+          documentId,
+          workspaceId: wsId,
+          includeDocumentContext: !!contextPack,
+          contextPack: contextPack || undefined,
+          messageHistory: prior,
+          mode: "chat",
+        },
+        {
+          onPhase: (_i, label) =>
+            dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
+          onBrowseSources: () => undefined,
+          onDone: (result) => {
+            const reply =
+              result.explanation?.trim() ||
+              "AI returned an empty reply. Try rephrasing or check the API key.";
+            const assistantMsg: ChatMessage = {
+              id: uid("msg"),
+              role: "assistant",
+              content: reply,
+              createdAt: Date.now(),
+              documentId,
+            };
+            dispatch({ type: "chat.append", threadId, message: assistantMsg });
+            finish(id, { status: "completed", message: "Chat reply" });
+          },
+          onError: (message) => {
+            const errMsg: ChatMessage = {
+              id: uid("msg"),
+              role: "assistant",
+              content: `AI unavailable: ${message}`,
+              createdAt: Date.now(),
+              documentId,
+            };
+            dispatch({ type: "chat.append", threadId, message: errMsg });
+            finish(id, { status: "error", error: message });
+          },
+        },
+      );
+    },
+    [state, start, finish, dispatch, ensureThread],
+  );
+
+  return { runBrowse, runExplain, runIncludeInSummary, runRevise, runRelatedSources, runChat, ensureThread };
 }
