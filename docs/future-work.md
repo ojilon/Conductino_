@@ -15,22 +15,26 @@
 | Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
-| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini via Go; key in `backend/.ai.env`) | `src/services/ai.ts`, `backend/services/ai.go` |
+| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/services/ai/` |
 | AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/services/ai.go` |
 | AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
-| Selection → AI action workflow | **WORKING** (block-level precision) | `DocumentView.tsx` |
-| Highlights / saved notes | **WORKING** (block-anchored) | `doc.highlight.add` |
-| Summary document editing | **BASIC WORKING** (plain text, contentEditable) | `SummaryDocumentView.tsx` |
-| AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING UI / MOCKED proposals** | `change.*` actions |
+| Selection → AI action workflow | **WORKING** (block anchor + range offsets) | `DocumentView.tsx` |
+| Highlights / saved notes | **WORKING** (block-anchored; range-precise spans where measured) | `doc.highlight.add` |
+| Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based; gated autosave to DOCX) | `SummaryDocumentView.tsx` |
+| AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING** (tool + chat driven; user gatekeeps every change) | `change.*` actions |
+| Chat `@doc` targeting + region selection | **WORKING** (`mentionIds` + selection anchor; autocomplete in composer) | `state/mentions.ts`, `aiController.runChat` |
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
-| PDF / DOCX rendering & extraction | **PLACEHOLDER** (mock structured renderer; library options evaluated in `tasks.md` §4) | `DocumentView.tsx`, `backend/services/documents.go` |
+| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/services/pdf.go`, `documents.go` |
 | Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + `.txt` extraction real; storage + AI mock** | `backend/services/` |
 | Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
-| Character-range selection & diffs | **FUTURE** (boundary documented) | architecture.md §Diff |
+| Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx`, `slateAdapter.ts` |
+| Skills / workflows / parallel APIs | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§1–3 |
+| Chat observability (tokens, model names, tool trace, logs DB) | **PROPOSAL** (usage + audit rings exist in memory; persistence + UI pending) | `docs/plans/08-operations-growth.md` §§4–5 |
+| CI + releases (tags, installer drive choice, portable zip) | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§6–7 |
 | Bookmarking pages, collections, workspace library content | **FUTURE** (UI placeholders exist) | sidebar views |
 
 ## Suggested order of real integration

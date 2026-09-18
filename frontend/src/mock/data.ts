@@ -15,7 +15,6 @@
  *  - `createInitialState`: the empty AppState (one blank browser tab so the
  *    browser chrome has a valid session; reader fully empty).
  */
-
 import type {
   AppState,
   BrowserSession,
@@ -46,7 +45,7 @@ const browserTabs: Record<string, BrowserTab> = {
 /* ------------------------------------------------------------------ */
 
 export const fileTreeMock: FileTreeNode = {
-  id: "ft-root",
+  id: "root",
   label: "research_workspace",
   kind: "folder",
   children: [
@@ -73,20 +72,14 @@ export const fileTreeMock: FileTreeNode = {
 /* ------------------------------------------------------------------ */
 
 export function makeDocumentFromSource(sourceId: string, source: Source, docId: string): Document {
-  const isWeb = source.kind === "web" || source.kind === "html";
   return {
     id: docId,
+    workspaceId: source.workspaceId,
     kind: "source",
     sourceId,
     currentPage: 1,
-    metadata: {
-      title: source.title,
-      author: source.origin,
-      venue: source.typeLabel,
-      format: source.kind === "pdf" ? "pdf" : source.kind === "docx" ? "docx" : isWeb ? "html" : "text",
-      pageCount: source.kind === "pdf" ? 8 : 3,
-      path: source.url ? undefined : source.origin,
-    },
+    metadata: { title: source.title, format: source.kind === "summary" ? "summary" : source.kind },
+    blocks: [{ id: "b1", type: "paragraph", segments: [{ text: source.abstract }] }],
     highlights: [],
     blocks: [
       { id: `${docId}-s1`, type: "heading", level: 2, segments: [{ text: isWeb ? "About this article" : "Overview" }] },
@@ -114,6 +107,18 @@ export function makeDocumentFromSource(sourceId: string, source: Source, docId: 
 export function createInitialState(): AppState {
   return {
     mode: "reader",
+    chat: { activeId: null, byId: {} },
+    workspace: {
+      activeId: "ws-demo",
+      byId: {
+        "ws-demo": {
+          id: "ws-demo",
+          rootPath: null,
+          primarySummaryId: "doc-summ",
+          label: "Demo research workspace",
+        },
+      },
+    },
     browser: {
       sessions: browserSessions,
       activeSessionId: "sess-1",

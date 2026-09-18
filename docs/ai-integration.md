@@ -19,12 +19,14 @@ interface AIProvider {
 
 interface AIRequest {
   operation: "AI_SEARCH" | "AI_SUMMARIZE" | "AI_EXPLAIN" | "AI_EXPAND"
-           | "AI_MERGE" | "AI_REWRITE" | "AI_VERIFY";
-  query?: string;                 // browse query
+           | "AI_MERGE" | "AI_REWRITE" | "AI_VERIFY" | "AI_CHAT";
+  query?: string;                 // browse query / chat message (@tokens stay in text)
   documentId?: string;
   sourceId?: string;
-  selection?: { blockId: string; text: string };
+  selection?: { blockId: string; text: string };  // anchored region (chat included)
   changeId?: string;              // for AI_REWRITE (revise a proposal)
+  mentionIds?: string[];          // resolved @doc targets — harness never guesses
+  focusedChange?: { id: string; op: "insert"|"modify"|"delete"; blockId: string; oldContent?: string; newContent?: string };  // chat-targeted revise ("shorten this proposal")
 }
 
 interface AIHandlers {
@@ -82,6 +84,13 @@ concurrent calls on the shared channel.
 | `AI_MERGE` | "Include in summary" | `insertion { text, citation }` → becomes a pending `DocumentChange` |
 | `AI_REWRITE` | "Revise again" | `revision` (replacement `newContent`) |
 | `AI_SUMMARIZE` | (future) summarize whole doc | `explanation` / future structured output |
+| `AI_CHAT` | chat composer (`@doc` + selection) | `explanation` + `proposals[] { op, targetBlockId, oldContent, newContent }` → pending `DocumentChange`s (insert/modify/delete) |
+
+`@doc` resolution (`state/mentions.ts`): composer tokens resolve against
+workspace documents to `mentionIds`; a mentioned summary overrides the
+workspace primary as proposal target. The live text selection rides along
+as the region anchor. Proposals are full edit power — insert, modify, or
+delete — never append-only; the user gatekeeps every one (accept/revise).
 
 Source ranking (`rank`/`relevance`) is attached by the app from the returned
 id order; the provider can send richer source objects later without UI

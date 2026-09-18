@@ -25,98 +25,106 @@ import (
 	// module. models supplies the JSON wire types used below.
 	"Conductino/backend"
 	"Conductino/backend/models"
+	"Conductino/backend/services"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// App is the single struct bound to Wails (see Run in main.go, Bind: app).
-// It holds the Wails runtime ctx plus the pure-Go backend bridge; every
-// method forwards to exactly one backend.Backend method.
+// App is the Wails-bound shell. It holds the pure-Go Backend and the
+// runtime context captured at Startup.
 type App struct {
-	// ctx is captured in Startup and reused by methods that emit events.
-	// Stored here (not taken as a parameter) because bindable methods must
-	// stay JSON-serialisable — context values cannot cross to JS.
-	ctx context.Context
-	// backend is the pure-Go bridge (models + services aggregator).
-	// All business logic lives behind it; this shell only translates the
-	// boundary (stored ctx, event emission).
+	ctx     context.Context
 	backend *backend.Backend
 }
 
-// NewApp creates the Wails shell with default backend services.
-// Called once by root main.go, then handed to Run.
+// NewApp constructs the shell with a fresh Backend.
 func NewApp() *App {
 	return &App{backend: backend.NewBackend()}
 }
 
-// Startup is called by Wails when the webview is ready. It saves ctx for
-// later EventsEmit calls and initialises persistence via the bridge.
+// Startup is called by Wails once the runtime is ready. It stores ctx so
+// later methods can call runtime.EventsEmit and forwards Init to Backend.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-	_ = a.backend.Init(ctx)
-	// Future: load sessions via backend → emit to UI with runtime.EventsEmit
+	if err := a.backend.Init(ctx); err != nil {
+		fmt.Printf("backend init: %v\n", err)
+	}
 }
 
-// Shutdown is called by Wails on exit. Add flush logic behind
-// backend.Shutdown when SQLite persistence lands.
-func (a *App) Shutdown(ctx context.Context) {
-	a.backend.Shutdown(ctx)
+// Shutdown releases backend resources (SQLite handle) on app exit.
+func (a *App) Shutdown(_ context.Context) {
+	// Backend has no Close exposed; nothing to flush yet (SQLite closes on
+	// process exit). Kept so wails.Run OnShutdown always has a target.
 }
 
-// Greet returns a greeting — kept from the default Wails scaffold so any
-// existing template bindings keep working. Not part of the domain model.
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+// ListTree returns the workspace file tree (legacy slice wrapper).
+// New code should call ListLibraryTree (single nested root node).
+func (a *App) ListTree() ([]models.FileTreeNode, error) {
+	return a.backend.ListTree(a.ctx)
 }
 
-/* --------------------------------------------------------------------
- * Bindable methods (UI: window.go.frontend.App.*).
- * Thin forwards: stored a.ctx in, backend result out. No logic here.
- * -------------------------------------------------------------------- */
-
-// ShowContainingFolder reveals a document's folder in the OS file manager.
-func (a *App) ShowContainingFolder(path string) (string, error) {
-	return a.backend.ShowContainingFolder(path)
-}
-
-// ListLibraryTree returns the curated library tree for the Library rail view
-// as ONE nested root node (with Children). Nil + nil means "no workspace yet".
+// ListLibraryTree is the canonical library call the TS frontend binds to
+// (window.go.frontend.App.ListLibraryTree). A nil *FileTreeNode arrives in
+// JS as null — the UI shows "Choose folder", not an error.
 func (a *App) ListLibraryTree() (*models.FileTreeNode, error) {
 	return a.backend.ListLibraryTree()
 }
 
-// SetLibraryRoot repoints the library at a new directory. Exported (and
-// bound) so a future UI flow can set the root without the dialog.
-func (a *App) SetLibraryRoot(path string) {
-	a.backend.SetLibraryRoot(path)
+// SelectFolder opens the OS folder dialog, repoints the library at the
+// picked folder, and returns its absolute path ("" on cancel). The TS
+// caller re-reads library.list() + libraryRoot() afterwards.
+func (a *App) SelectFolder() (string, error) {
+	picked, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose research folder",
+	})
+	if err != nil {
+		return "", err
+	}
+	if picked == "" {
+		return "", nil // cancelled — caller keeps the current tree
+	}
+	if err := a.backend.SetLibraryRoot(a.ctx, picked); err != nil {
+		return "", err
+	}
+	return picked, nil
 }
 
-// LibraryRoot returns the absolute workspace root so the UI can tag opened
-// documents with their opening folder (tasks.md 1.1 option b).
+// ShowContainingFolder reveals a workspace path in the OS file manager.
+func (a *App) ShowContainingFolder(path string) (string, error) {
+	return a.backend.ShowContainingFolder(path)
+}
+
+// ReadRawFile serves base64-encoded workspace bytes for renderers needing
+// originals (PDF canvas leaf). Resolve-jailed; oversized files are refused.
+func (a *App) ReadRawFile(path string) (string, error) {
+	return a.backend.ReadRawFile(path)
+}
+
+// OpenFile extracts a document from a path under the library root.
+// Returns OpenedDocument (BlocksJSON wire payload + typed Reason on failure),
+// matching Documents.OpenFile — never a fabricated document.
+func (a *App) OpenFile(path string) (*models.OpenedDocument, error) {
+	return a.backend.OpenFile(a.ctx, path)
+}
+
+// ResolvePath resolves a relative path against the library root.
+func (a *App) ResolvePath(path string) (string, error) {
+	return a.backend.ResolvePath(a.ctx, path)
+}
+
+// SetLibraryRoot binds the workspace to a folder on disk.
+func (a *App) SetLibraryRoot(root string) error {
+	return a.backend.SetLibraryRoot(a.ctx, root)
+}
+
+// LibraryRoot returns the current library root path.
 func (a *App) LibraryRoot() string {
 	return a.backend.LibraryRoot()
 }
 
-// OpenFile opens one workspace file by its Path token and returns real
-// extracted content for supported types (.txt/.md today). Unsupported types
-// and escapes come back as errors — the UI falls back to its mock extract.
-func (a *App) OpenFile(path string) (models.OpenedDocument, error) {
-	return a.backend.OpenFile(path)
-}
-
-// GetSources returns persisted sources (empty on the in-memory mock).
-func (a *App) GetSources() ([]models.Source, error) {
-	return a.backend.GetSources(a.ctx)
-}
-
-// SaveWorkspace persists the current session snapshot.
-func (a *App) SaveWorkspace() error {
-	return a.backend.SaveWorkspace(a.ctx)
-}
-
-// ExtractDocument turns a raw Source into renderable blocks JSON.
-func (a *App) ExtractDocument(source models.Source) (string, error) {
-	return a.backend.ExtractDocument(a.ctx, source)
+// WorkspaceID returns the current workspace id.
+func (a *App) WorkspaceID() string {
+	return a.backend.WorkspaceID()
 }
 
 // StorageEngine reports the active persistence engine ("memory"/"sqlite").
@@ -124,31 +132,92 @@ func (a *App) StorageEngine() string {
 	return a.backend.StorageEngine()
 }
 
-// StreamAIRequest runs an AI operation and streams progress units to the UI
-// via runtime.EventsEmit(ctx, "ai://event", ev). Channels cannot cross the
-// JS boundary, so streaming goes exclusively through EventsEmit — the pure
-// backend.RunAI callback is wrapped here, at the Wails edge, which is the
-// only place allowed to touch the runtime package.
-func (a *App) StreamAIRequest(req models.AIRequest) error {
-	a.backend.RunAI(a.ctx, req, func(ev models.AIEvent) {
-		runtime.EventsEmit(a.ctx, "ai://event", ev)
-	})
-	return nil
+// AIMeters reports AI session telemetry for the Settings dialog
+// (per-provider calls/errors/token estimates/RPM + tool call counts).
+func (a *App) AIMeters() string {
+	return a.backend.UsageMeters()
 }
 
-// SelectFolder opens the OS folder dialog and repoints the workspace at the
-// chosen directory, so the next ListWorkspace reads the newly picked folder.
-// A cancelled dialog returns "" + nil and leaves the current root untouched.
-// (Drive-by fixes while wiring this up: OpenDialogOptions needed its runtime
-// qualifier, and the dialog call is OpenDirectoryDialog in Wails v2 — the
-// pasted WithOptions name does not exist there.)
-func (a *App) SelectFolder() (string, error) {
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select folder to read from",
+// RunAI streams an AI operation. Events are emitted as "ai:event" (legacy).
+// New code should call StreamAIRequest, which emits "ai://event" — the
+// channel services/ai.ts actually subscribes to.
+func (a *App) RunAI(req models.AIRequest) error {
+	return a.backend.RunAI(a.ctx, req, func(ev models.AIEvent) {
+		runtime.EventsEmit(a.ctx, "ai:event", ev)
 	})
-	if err != nil || path == "" {
-		return path, err
-	}
-	a.backend.SetLibraryRoot(path)
-	return path, nil
+}
+
+// StreamAIRequest is the AI bridge services/ai.ts binds to
+// (window.go.frontend.App.StreamAIRequest). Progress + results stream back
+// on the shared "ai://event" channel, demultiplexed by requestId.
+func (a *App) StreamAIRequest(req models.AIRequest) error {
+	return a.backend.RunAI(a.ctx, req, func(ev models.AIEvent) {
+		runtime.EventsEmit(a.ctx, "ai://event", ev)
+	})
+}
+
+// SetPrimarySummary marks a document as the workspace primary summary.
+func (a *App) SetPrimarySummary(summaryID string) error {
+	return a.backend.SetPrimarySummary(summaryID)
+}
+
+// WriteSummaryDOCX writes the summary blocks as a .docx under the library root.
+// relPath may be empty (auto name from title). Returns absolute path written.
+func (a *App) WriteSummaryDOCX(relPath, blocksJSON string) (string, error) {
+	return a.backend.WriteSummaryDOCX(relPath, blocksJSON)
+}
+
+// SaveDocument persists a document record.
+func (a *App) SaveDocument(doc services.DocumentRecord) error {
+	return a.backend.SaveDocument(doc)
+}
+
+// LoadDocument loads a document by id.
+func (a *App) LoadDocument(id string) (*services.DocumentRecord, error) {
+	return a.backend.LoadDocument(id)
+}
+
+// ListDocuments lists documents for a workspace.
+func (a *App) ListDocuments(workspaceID string) ([]services.DocumentRecord, error) {
+	return a.backend.ListDocuments(workspaceID)
+}
+
+// SaveChange persists a document change.
+func (a *App) SaveChange(ch services.ChangeRecord) error {
+	return a.backend.SaveChange(ch)
+}
+
+// ListPendingChanges lists pending changes for a document.
+func (a *App) ListPendingChanges(documentID string) ([]services.ChangeRecord, error) {
+	return a.backend.ListPendingChanges(documentID)
+}
+
+// SaveThread upserts a chat thread.
+func (a *App) SaveThread(t services.ChatThreadRecord) error {
+	return a.backend.SaveThread(t)
+}
+
+// AppendChatMessage appends a message to a thread.
+func (a *App) AppendChatMessage(msg services.ChatMessageRecord) error {
+	return a.backend.AppendChatMessage(msg)
+}
+
+// LoadThread loads a chat thread by id.
+func (a *App) LoadThread(id string) (*services.ChatThreadRecord, error) {
+	return a.backend.LoadThread(id)
+}
+
+// ListThreads lists chat threads for a workspace.
+func (a *App) ListThreads(workspaceID string) ([]services.ChatThreadRecord, error) {
+	return a.backend.ListThreads(workspaceID)
+}
+
+// ListMessages lists messages in a thread.
+func (a *App) ListMessages(threadID string) ([]services.ChatMessageRecord, error) {
+	return a.backend.ListMessages(threadID)
+}
+
+// LoadPrimarySummary returns the primary summary document for a workspace.
+func (a *App) LoadPrimarySummary(workspaceID string) (*services.DocumentRecord, error) {
+	return a.backend.LoadPrimarySummary(workspaceID)
 }

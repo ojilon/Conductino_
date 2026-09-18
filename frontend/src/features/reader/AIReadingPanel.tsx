@@ -1,20 +1,18 @@
 /**
  * AI Reading panel (right, resizable, collapsible).
  *
- * Two faces, driven by the active document:
- *  - source documents  → "AI Reading" companion: selected passage,
- *                        explanation, related sources, follow-up actions
- *  - summary document  → "Review AI changes": pending DocumentChange
- *                        proposals with accept / reject / inspect / revise
+ * Faces (Phase 4):
+ *  - Chat       — multi-turn workspace-scoped thread + composer
+ *  - Reading    — source companion (selected passage / explanation)
+ *  - Review     — summary pending DocumentChange proposals
  *
- * The panel also surfaces live AI activity so the app can always answer
- * "what is the AI doing right now, and on which document?"
+ * Tab switch is driven by reader.ui.aiPanelTab ("chat" | "reading").
  */
 
-import { useEffect, useState } from "react";
-import { useApp, runningActivity, pendingChangesFor } from "../../state/appState";
+import { useEffect, useRef, useState } from "react";
+import { useApp, runningActivity, pendingChangesFor, activeWorkspace } from "../../state/appState";
 import { useAIRunners, type SelectionRef } from "../../state/aiController";
-import type { Document, DocumentChange } from "../../types/domain";
+import type { AiPanelTab, Document, DocumentChange } from "../../types/domain";
 import { Icon, type IconName } from "../../components/icons";
 import { Button, EmptyState, IconBtn, Spinner } from "../../components/ui";
 import { cn } from "../../utils/cn";
@@ -65,6 +63,166 @@ function HistoryList({ documentId }: { documentId?: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat face (Phase 4)                                                 */
+/* ------------------------------------------------------------------ */
+
+function ChatFace({ doc }: { doc: Document }) {
+  const { state, dispatch } = useApp();
+  const { runChat, ensureThread } = useAIRunners();
+  const [draft, setDraft] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const running = runningActivity(state);
+  const runningChat = running?.operation === "AI_CHAT";
+
+  const wsId = activeWorkspace(state)?.id ?? doc.workspaceId ?? "ws-demo";
+  const thread =
+    (state.chat.activeId && state.chat.byId[state.chat.activeId]) ||
+    Object.values(state.chat.byId).find((t) => t.workspaceId === wsId) ||
+    null;
+
+  // @doc autocomplete: token after the last "@" before the cursor filters
+  // workspace documents by title; picking one splices the full title in.
+  // Send-time resolution (resolveMentions) is the ground truth — this list
+  // is just a typing aid so tokens match real documents.
+  const [cursor, setCursor] = useState(0);
+  const atToken = (() => {
+    const before = draft.slice(0, cursor);
+    const m = /@([\p{L}\p{N}._-]*)$/u.exec(before);
+    return m ? m[1] : null;
+  })();
+  const candidates = (() => {
+    if (atToken === null) return [];
+    const docs = Object.values(state.documents).filter(
+      (d) => !d.workspaceId || d.workspaceId === wsId,
+    );
+    const needle = atToken.toLowerCase();
+    return docs
+      .filter((d) => !needle || d.metadata.title.toLowerCase().includes(needle))
+      .slice(0, 6);
+  })();
+  const completeMention = (title: string) => {
+    const before = draft.slice(0, cursor);
+    const after = draft.slice(cursor);
+    const replaced = before.replace(/@[\p{L}\p{N}._-]*$/u, `@${title} `);
+    const next = replaced + after;
+    setDraft(next);
+    setCursor(replaced.length);
+  };
+
+  useEffect(() => {
+    ensureThread(doc.id);
+  }, [doc.id, ensureThread]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [thread?.messages.length, runningChat]);
+
+  const send = () => {
+    const t = draft.trim();
+    if (!t || runningChat) return;
+    setDraft("");
+    runChat(t, { documentId: doc.id, includeContext: true });
+  };
+
+  const clear = () => {
+    if (!thread) return;
+    dispatch({ type: "chat.clear", threadId: thread.id });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ActivityStrip />
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {!thread || thread.messages.length === 0 ? (
+          <EmptyState
+            icon="sparkles"
+            title="Chat about this document"
+            hint="Ask follow-ups, request clarifications, or brainstorm claims. Context from the open document is attached automatically. Type @ to target a document; select text to anchor a region."
+          />
+        ) : (
+          thread.messages.map((m) => (
+            <div
+              key={m.id}
+              className={cn(
+                "rounded-lg px-3 py-2.5 text-[12.5px] leading-relaxed",
+                m.role === "user"
+                  ? "ml-6 bg-iris-50 text-ink-800"
+                  : "mr-4 border border-line-soft bg-cream-50 text-ink-700",
+              )}
+            >
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-mute">
+                {m.role === "user" ? "You" : "Assistant"}
+              </p>
+              <p className="whitespace-pre-wrap">{m.content}</p>
+            </div>
+          ))
+        )}
+        {runningChat && (
+          <div className="mr-4 flex items-center gap-2 rounded-lg border border-iris-200 bg-iris-50 px-3 py-2 text-[12px] text-iris-700">
+            <Spinner size={12} /> Thinking…
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="border-t border-line-soft px-3 py-2.5">
+        {candidates.length > 0 && (
+          <div className="mb-1.5 overflow-hidden rounded-lg border border-line-soft bg-white shadow-sm">
+            {candidates.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => completeMention(d.metadata.title)}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-ink-700 hover:bg-iris-50"
+              >
+                <span className="font-semibold text-iris-600">@</span>
+                <span className="min-w-0 flex-1 truncate">{d.metadata.title}</span>
+                <span className="shrink-0 text-[10.5px] text-mute">{d.kind}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setCursor(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={2}
+            placeholder="Ask about the document… (@title to target a doc)"
+            className="min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-cream-50 px-3 py-2 text-[12.5px] text-ink-800 outline-none focus:border-iris-300"
+            disabled={!!runningChat}
+          />
+          <Button size="sm" variant="soft" icon="sparkles" disabled={!draft.trim() || !!runningChat} onClick={send}>
+            Send
+          </Button>
+        </div>
+        <div className="mt-1.5 flex items-center justify-between">
+          <p className="text-[10.5px] text-mute">Enter to send · Shift+Enter newline</p>
+          {thread && thread.messages.length > 0 && (
+            <button
+              type="button"
+              className="text-[10.5px] text-mute hover:text-ink-700"
+              onClick={clear}
+            >
+              Clear thread
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -228,7 +386,6 @@ function ReviewFace({ doc }: { doc: Document }) {
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         <ActivityStrip />
 
-        {/* pending list */}
         <section>
           <h4 className="mb-2 flex items-center justify-between text-[12px] font-semibold text-ink-900">
             Pending changes
@@ -271,7 +428,6 @@ function ReviewFace({ doc }: { doc: Document }) {
           )}
         </section>
 
-        {/* actions for focused change */}
         {focused && (
           <div className="space-y-2">
             <Button variant="solid" icon="check" className="w-full" onClick={() => decide("accepted")}>
@@ -314,7 +470,6 @@ function ReviewFace({ doc }: { doc: Document }) {
           </div>
         )}
 
-        {/* legend */}
         <div className="space-y-1.5 rounded-lg border border-line-soft bg-cream-50 px-3 py-2.5">
           <p className="flex items-center gap-2 text-[11.5px] text-ink-700">
             <span className="h-3 w-5 rounded bg-hay-100 ring-1 ring-hay-200" /> Inserted
@@ -336,19 +491,41 @@ function ReviewFace({ doc }: { doc: Document }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Panel shell                                                         */
+/* Panel shell + tabs                                                  */
 /* ------------------------------------------------------------------ */
 
 export default function AIReadingPanel({ doc }: { doc: Document }) {
-  const { dispatch } = useApp();
-  const title = doc.kind === "summary" ? "Review AI changes" : "AI Reading";
+  const { state, dispatch } = useApp();
+  const tab: AiPanelTab = state.reader.ui.aiPanelTab ?? "chat";
+  const readingLabel = doc.kind === "summary" ? "Review" : "Reading";
+
+  const setTab = (next: AiPanelTab) =>
+    dispatch({ type: "reader.ui", patch: { aiPanelTab: next } });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-line-soft px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Icon name="sparkles" size={15} className="text-iris-600" />
-          <h2 className="font-serif text-[15px] font-semibold text-ink-900">{title}</h2>
+      <div className="flex items-center justify-between border-b border-line-soft px-3 py-2">
+        <div className="flex items-center gap-1 rounded-lg bg-cream-100 p-0.5">
+          <button
+            type="button"
+            onClick={() => setTab("chat")}
+            className={cn(
+              "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+              tab === "chat" ? "bg-white text-ink-900 shadow-sm" : "text-mute hover:text-ink-700",
+            )}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("reading")}
+            className={cn(
+              "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+              tab === "reading" ? "bg-white text-ink-900 shadow-sm" : "text-mute hover:text-ink-700",
+            )}
+          >
+            {readingLabel}
+          </button>
         </div>
         <IconBtn
           name="x"
@@ -357,7 +534,13 @@ export default function AIReadingPanel({ doc }: { doc: Document }) {
         />
       </div>
 
-      {doc.kind === "summary" ? <ReviewFace doc={doc} /> : <CompanionFace doc={doc} />}
+      {tab === "chat" ? (
+        <ChatFace doc={doc} />
+      ) : doc.kind === "summary" ? (
+        <ReviewFace doc={doc} />
+      ) : (
+        <CompanionFace doc={doc} />
+      )}
     </div>
   );
 }

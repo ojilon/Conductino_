@@ -30,6 +30,12 @@ interface WailsApp {
   OpenFile(path: string): Promise<OpenedFile>;
   ShowContainingFolder(path: string): Promise<string>;
   LibraryRoot(): Promise<string>;
+  /** Phase 8: write summary blocks as .docx under library root. */
+  WriteSummaryDOCX(relPath: string, blocksJSON: string): Promise<string>;
+  /** Session AI telemetry (per-provider calls + tool counts), "" when idle. */
+  AIMeters(): Promise<string>;
+  /** Raw workspace bytes (base64) for renderers needing originals (PDF canvas). */
+  ReadRawFile(path: string): Promise<string>;
 }
 
 declare global {
@@ -69,42 +75,13 @@ export interface OpenedFile {
 }
 
 export interface FilesystemService {
-  /**
-   * OS folder dialog (App.SelectFolder). Returns the picked absolute path,
-   * or null when cancelled. The Go side repoints the library itself, so
-   * callers just re-call library.list() afterwards. Null in mock/browser
-   * mode (no dialog exists there) — callers treat it as "keep current tree".
-   */
   selectFolder(): Promise<string | null>;
-  /**
-   * Open one workspace file by its Path token (App.OpenFile → Documents).
-   * Real content for .txt/.md today. Null only when no bridge exists
-   * (mock/browser mode). Classified failures (unsupported type, missing
-   * file, access denied, too large, unreadable) resolve with `reason`
-   * set — the caller shows an honest error and opens nothing. A rejection
-   * means an unexpected bridge failure, not a known file problem.
-   */
   openFile(path: string): Promise<OpenedFile | null>;
-  /** OS "show in folder" — a Go-only capability. */
   showContainingFolder(path: string): Promise<{ ok: boolean; note: string }>;
-  /**
-   * Absolute workspace root (App.LibraryRoot). Null in mock/browser mode.
-   * Used to tag opened documents and detect stale tabs (tasks.md 1.1 b).
-   */
   libraryRoot(): Promise<string | null>;
 }
 
-/**
- * Curated library view over the chosen folder (Workspace service:
- * App.ListLibraryTree). Separate from FilesystemService on purpose — raw
- * OS capability (walk/reveal/dialog) vs. the research library (root choice,
- * nesting, later persistence + file↔document mapping).
- */
 export interface LibraryService {
-  /**
-   * Library tree (ONE nested root node). Null means "no folder yet" — the
-   * UI shows its empty state, not an error.
-   */
   list(): Promise<FileTreeNode | null>;
 }
 
@@ -114,7 +91,6 @@ export interface StorageService {
 }
 
 export interface SourceService {
-  /** Fetch/extract the full text of a source for AI operations. */
   fetchContent(sourceId: string): Promise<{ text: string; note?: string }>;
 }
 
@@ -132,20 +108,16 @@ export interface BackendServices {
   workspace: WorkspaceService;
 }
 
-/* ------------------------------------------------------------------ */
-/* Mock implementation (in-memory)                                     */
-/* ------------------------------------------------------------------ */
-
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MockFilesystem: FilesystemService = {
   async selectFolder() {
     await delay(50);
-    return null; // no OS dialog in mock/browser mode — caller keeps current tree
+    return null;
   },
   async openFile() {
     await delay(50);
-    return null; // no extractor in mock mode — caller uses the mock factory
+    return null;
   },
   async showContainingFolder(path) {
     await delay(200);
@@ -195,31 +167,28 @@ const MockWorkspace: WorkspaceService = {
   },
 };
 
-/* ------------------------------------------------------------------ */
-/* Wails implementation (desktop build only)                           */
-/* ------------------------------------------------------------------ */
-
-// Temporary, direct push-through to the Go shell — no caching, no shaping.
-// Its only job is proving the extraction pipe end-to-end: dialog → walkDir
-// tree → .txt bytes → rendered tab. Rendering stays exactly as-is.
 const WailsFilesystem: FilesystemService = {
   async selectFolder() {
     const app = wailsApp();
-    if (!app) return null;
-    const picked = await app.SelectFolder();
-    return picked || null; // Go returns "" on cancel
+    if (!app || typeof app.SelectFolder !== "function") return null;
+    try {
+      const picked = await app.SelectFolder();
+      return picked || null;
+    } catch {
+      return null;
+    }
   },
   async openFile(path) {
     const app = wailsApp();
-    if (!app) return null;
-    // No catch-and-null here (tasks.md 1.2): a read failure must reach the
-    // caller as a typed `reason` value or a rejection — never collapse into
-    // the mock path. Only truly unexpected bridge errors reject.
+    if (!app || typeof app.OpenFile !== "function") return null;
     return await app.OpenFile(path);
   },
   async showContainingFolder(path) {
     const app = wailsApp();
     if (!app) return { ok: false, note: "Desktop bridge unavailable (browser mock mode)." };
+    if (typeof app.ShowContainingFolder !== "function") {
+      return { ok: false, note: "Reveal needs a newer desktop build — restart `wails dev`." };
+    }
     try {
       const dir = await app.ShowContainingFolder(path);
       return { ok: true, note: `Revealed in file manager: ${dir}` };
@@ -229,7 +198,7 @@ const WailsFilesystem: FilesystemService = {
   },
   async libraryRoot() {
     const app = wailsApp();
-    if (!app) return null;
+    if (!app || typeof app.LibraryRoot !== "function") return null;
     try {
       const root = await app.LibraryRoot();
       return root || null;
@@ -241,33 +210,88 @@ const WailsFilesystem: FilesystemService = {
 
 const WailsLibrary: LibraryService = {
   async list() {
-    return wailsApp()?.ListLibraryTree() ?? null;
+    const app = wailsApp();
+    const fn = app && (app as unknown as { ListLibraryTree?: unknown }).ListLibraryTree;
+    if (typeof fn !== "function") {
+      throw new Error("Library bridge outdated — restart `wails dev` to rebind Go methods.");
+    }
+    const raw = (await (fn as () => Promise<FileTreeNode | FileTreeNode[] | null>)()) ?? null;
+    if (Array.isArray(raw)) return raw[0] ?? null;
+    return raw;
   },
 };
 
-/* ------------------------------------------------------------------ */
+const mockBackend: BackendServices = {
+  mode: "mock",
+  filesystem: MockFilesystem,
+  library: MockLibrary,
+  storage: MockStorage,
+  sources: MockSources,
+  workspace: MockWorkspace,
+};
+
+const wailsBackend: BackendServices = {
+  mode: "wails",
+  filesystem: WailsFilesystem,
+  library: WailsLibrary,
+  storage: MockStorage,
+  sources: MockSources,
+  workspace: MockWorkspace,
+};
 
 export function createBackend(): BackendServices {
-  // Desktop build: the Go shell is present — use it for the library +
-  // filesystem pipe (storage/sources/workspace stay mocked for now).
-  if (wailsApp()) {
-    return {
-      mode: "wails",
-      filesystem: WailsFilesystem,
-      library: WailsLibrary,
-      storage: MockStorage,
-      sources: MockSources,
-      workspace: MockWorkspace,
-    };
-  }
-  return {
-    mode: "mock",
-    filesystem: MockFilesystem,
-    library: MockLibrary,
-    storage: MockStorage,
-    sources: MockSources,
-    workspace: MockWorkspace,
-  };
+  if (wailsApp()) return wailsBackend;
+  return mockBackend;
 }
 
-export const backend: BackendServices = createBackend();
+export const backend: BackendServices = new Proxy({} as BackendServices, {
+  get(_t, p: keyof BackendServices) {
+    const live = wailsApp() ? wailsBackend : mockBackend;
+    if (p === "mode") return live.mode;
+    return live[p];
+  },
+});
+
+/**
+ * Phase 8: persist canonical summary blocks as a .docx under the workspace.
+ * relPath empty → auto name under summaries/. Returns absolute path, or null
+ * when the Wails bridge is unavailable (browser/mock mode).
+ */
+export async function writeSummaryDOCX(
+  blocksJSON: string,
+  relPath = "",
+): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.WriteSummaryDOCX !== "function") return null;
+  return app.WriteSummaryDOCX(relPath, blocksJSON);
+}
+
+/**
+ * AI session telemetry for Settings (per-provider calls/errors/token
+ * estimates/RPM + tool call counts). Null in browser/mock mode or when
+ * nothing ran yet.
+ */
+export async function getAIMeters(): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.AIMeters !== "function") return null;
+  try {
+    const s = await app.AIMeters();
+    return s?.trim() ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Raw workspace bytes for renderers needing originals (PDF canvas leaf).
+ * Resolve-jailed on the Go side; null without the desktop bridge.
+ */
+export async function openRawFile(path: string): Promise<Uint8Array | null> {
+  const app = wailsApp();
+  if (!app || typeof app.ReadRawFile !== "function") return null;
+  const b64 = await app.ReadRawFile(path);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}

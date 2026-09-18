@@ -68,6 +68,8 @@ export type Relevance = "highest" | "high" | "good";
  */
 export interface Source {
   id: ID;
+  /** Owning workspace; undefined = legacy/unscoped (mock until tagged). */
+  workspaceId?: ID;
   kind: SourceKind;
   title: string;
   /** Host (web) or file path (local). */
@@ -83,6 +85,25 @@ export interface Source {
   documentId?: ID;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Workspace (folder-scoped session)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One open research folder. Maps sources/summaries so "include in summary"
+ * never picks an arbitrary first summary (tasks.md §2 / Phase 2).
+ * rootPath is absolute on desktop; null for the seeded mock workspace.
+ */
+export interface WorkspaceSession {
+  id: ID;
+  /** Absolute library root when known (desktop). */
+  rootPath: string | null;
+  /** Summary document that receives AI merges for this workspace. */
+  primarySummaryId: ID | null;
+  label?: string;
+}
+
 /* ------------------------------------------------------------------ */
 /* AI                                                                  */
 /* ------------------------------------------------------------------ */
@@ -94,7 +115,8 @@ export type AIOperation =
   | "AI_EXPAND"
   | "AI_MERGE"
   | "AI_REWRITE"
-  | "AI_VERIFY";
+  | "AI_VERIFY"
+  | "AI_CHAT";
 
 export type AIStatus = "running" | "completed" | "error";
 
@@ -116,6 +138,7 @@ export interface AIActivity {
   id: ID;
   operation: AIOperation;
   status: AIStatus;
+  workspaceId?: ID;
   /** Human-readable progress message ("Comparing sources…"). */
   message: string;
   documentId?: ID;
@@ -127,6 +150,12 @@ export interface AIActivity {
   error?: string;
 }
 
+/** One prior turn for multi-turn chat (Phase 4). */
+export interface ChatTurn {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 export interface AIRequest {
   operation: AIOperation;
   query?: string;
@@ -134,6 +163,56 @@ export interface AIRequest {
   sourceId?: ID;
   selection?: { blockId: ID; text: string };
   changeId?: ID;
+  /** Phase 2/3: owning workspace when known. */
+  workspaceId?: ID;
+  /** User-authored instruction (selection toolbar / chat composer). */
+  customPrompt?: string;
+  /** When true (default for explain family), attach document context pack. */
+  includeDocumentContext?: boolean;
+  /**
+   * Pre-assembled context (selection window + outline). Built on the
+   * frontend while blocks live in AppState; backend appends to the prompt.
+   */
+  contextPack?: string;
+  /** Phase 4: prior turns (current user message is query / customPrompt). */
+  messageHistory?: ChatTurn[];
+  /** "oneshot" | "chat" — hint for prompt assembly. */
+  mode?: "oneshot" | "chat";
+  /** Phase 5: truncated plain-text summary for read_summary tool. */
+  summaryContent?: string;
+  /** Phase 5: primary summary document id for propose_summary_edit. */
+  primarySummaryId?: ID;
+  /**
+   * Resolved `@doc` mentions: document ids named in the chat composer.
+   * The raw `@token` stays in `query`; these ids tell the harness exactly
+   * which documents were meant, so it never guesses. A mentioned summary
+   * overrides the workspace primary as the proposal target.
+   */
+  mentionIds?: ID[];
+  /**
+   * Focused pending proposal for chat-targeted revise ("shorten this
+   * proposal"): the change the user likely means. The model revises it by
+   * emitting a modify/delete proposal against the same block — never edits
+   * in place. Set from explicit opts, selection-overlap, or revise-intent
+   * wording over the target summary's most recent pending change.
+   */
+  focusedChange?: {
+    id: ID;
+    op: "insert" | "modify" | "delete";
+    blockId: ID;
+    oldContent?: string;
+    newContent?: string;
+  };
+}
+
+/** One AI-proposed summary edit. insert appends; modify/delete target a block. */
+export interface AIProposal {
+  op: "insert" | "modify" | "delete";
+  /** Target block in the summary (modify/delete; insert = insert after). */
+  targetBlockId?: ID;
+  oldContent?: string;
+  newContent: string;
+  highlightFragment?: string;
 }
 
 /** What a provider can produce back to the app. */
@@ -142,6 +221,8 @@ export interface AIResult {
   relatedSources?: { title: string; meta: string }[];
   insertion?: { text: string; citation: string };
   revision?: string;
+  /** Full proposal edits (insert/modify/delete). Legacy `insertion` maps to one insert. */
+  proposals?: AIProposal[];
 }
 
 export interface AIHandlers {
@@ -166,6 +247,38 @@ export interface AIProvider {
   /** Runs the request, streaming phases; returns a cancel function. */
   run(request: AIRequest, handlers: AIHandlers): () => void;
 }
+
+/* ------------------------------------------------------------------ */
+/* Chat (Phase 4 — in-memory; SQLite in Phase 6)                       */
+/* ------------------------------------------------------------------ */
+
+export type ChatRole = "user" | "assistant" | "system";
+
+export interface ChatMessage {
+  id: ID;
+  role: ChatRole;
+  content: string;
+  createdAt: number;
+  /** Optional link to the document that was in focus when sent. */
+  documentId?: ID;
+}
+
+/**
+ * One conversation thread, scoped to a workspace (and optionally a document).
+ * Threads live in AppState for Phase 4; Phase 6 persists to SQLite.
+ */
+export interface ChatThread {
+  id: ID;
+  workspaceId: ID;
+  /** When set, the thread is tied to a specific open document. */
+  documentId?: ID;
+  title?: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AiPanelTab = "chat" | "reading";
 
 /* ------------------------------------------------------------------ */
 /* Documents                                                           */
@@ -212,22 +325,25 @@ export interface DocumentMetadata {
 }
 
 /**
- * A highlight/annotation anchored to a block. (A future renderer
- * upgrade should carry precise character offsets; the UI already
- * distinguishes block-level from range-level annotations.)
+ * A highlight/annotation anchored to a block. `range` carries precise
+ * character offsets within the block's concatenated text (UTF-16, as the
+ * DOM reports) once renderers support it; block-anchored highlights leave
+ * it undefined and match the whole block.
  */
 export interface Highlight {
   id: ID;
   blockId: ID;
   text: string;
+  range?: { start: number; end: number };
   note?: string;
   createdAt: number;
 }
 
 export interface Document {
   id: ID;
-  /** "source" = read-only research document; "summary" = editable. */
+  /** Owning workspace; undefined = legacy/unscoped. */
   kind: "source" | "summary";
+  workspaceId?: ID;
   sourceId: ID;
   metadata: DocumentMetadata;
   blocks: DocumentBlock[];
@@ -256,6 +372,8 @@ export type ChangeStatus = "pending" | "accepted" | "rejected";
 export interface DocumentChange {
   id: ID;
   documentId: ID;
+  /** Owning workspace (same as target document when set). */
+  workspaceId?: ID;
   type: ChangeType;
   blockId: ID;
   oldContent: string;
@@ -287,6 +405,8 @@ export interface ReaderUIState {
   railView: RailView;
   aiPanelOpen: boolean;
   aiPanelWidth: number;
+  /** Phase 4: which face of the AI panel is visible. */
+  aiPanelTab: AiPanelTab;
   /** AI Reading companion payload for the current document. */
   companion: {
     documentId: ID;
@@ -295,6 +415,14 @@ export interface ReaderUIState {
     sourceLabel: string;
     /** Related sources returned by the provider with the explanation. */
     relatedSources?: { title: string; meta: string }[];
+  } | null;
+  /**
+   * When "include in summary" finds multiple summary targets in the same
+   * folder/workspace, the UI asks which one to use.
+   */
+  summaryPick: {
+    selection: { documentId: ID; blockId: ID; text: string };
+    candidates: { id: ID; title: string }[];
   } | null;
 }
 
@@ -312,6 +440,14 @@ export interface TextSelection {
   documentId: ID;
   blockId: ID;
   text: string;
+  /**
+   * Precise offsets within the block's concatenated text (UTF-16, as the
+   * DOM reports). Set when the selection sits inside a single block;
+   * multi-block selections stay block-anchored (range undefined).
+   * This is the interim coordinate system until a PDF text layer lands
+   * (docs/document-rendering.md) — offsets, not pixels.
+   */
+  range?: { start: number; end: number };
   /** Viewport coordinates of the selection (for the floating toolbar). */
   x: number;
   y: number;
@@ -338,6 +474,22 @@ export interface AppState {
   mode: AppMode;
   browser: BrowserState;
   reader: ReaderState;
+  /**
+   * Folder-scoped sessions. activeId is the library currently open;
+   * primarySummaryId on that session is the merge target.
+   */
+  workspace: {
+    activeId: ID | null;
+    byId: Record<ID, WorkspaceSession>;
+  };
+  /**
+   * Phase 4 chat threads (in-memory). activeId is the thread currently
+   * shown in the Chat face; byId is keyed by thread id.
+   */
+  chat: {
+    activeId: ID | null;
+    byId: Record<ID, ChatThread>;
+  };
   sources: Record<ID, Source>;
   documents: Record<ID, Document>;
   changes: Record<ID, DocumentChange>;

@@ -7,10 +7,10 @@
  * persist for the lifetime of the app.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AppProvider, useApp, activeReaderDocument } from "./state/appState";
 import { getAIProvider } from "./services/ai";
-import { backend } from "./services/backend";
+import { backend, getAIMeters } from "./services/backend";
 import { Icon } from "./components/icons";
 import { IconBtn, Modal, Button, Badge } from "./components/ui";
 import { cn } from "./utils/cn";
@@ -153,7 +153,7 @@ function Row({ icon, name, status, note, tone }: { icon: Parameters<typeof Icon>
           <p className="text-[12.5px] font-semibold text-ink-900">{name}</p>
           <Badge tone={tone === "ok" ? "moss" : "hay"}>{status}</Badge>
         </div>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-mute">{note}</p>
+        <p className="mt-0.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-mute">{note}</p>
       </div>
     </div>
   );
@@ -161,6 +161,15 @@ function Row({ icon, name, status, note, tone }: { icon: Parameters<typeof Icon>
 
 function SettingsDialog() {
   const { state, dispatch } = useApp();
+  const [meters, setMeters] = useState<string | null>(null);
+  useEffect(() => {
+    if (!state.settingsOpen) return;
+    let live = true;
+    getAIMeters().then((m) => live && setMeters(m));
+    return () => {
+      live = false;
+    };
+  }, [state.settingsOpen]);
   if (!state.settingsOpen) return null;
   const provider = getAIProvider();
   return (
@@ -171,14 +180,14 @@ function SettingsDialog() {
           name="AI provider"
           status={provider.configured ? "Connected" : "Mock service"}
           tone={provider.configured ? "ok" : "mock"}
-          note={`Active: ${provider.name}. The key lives in Go only (GEMINI_API_KEY env or git-ignored backend/.ai.env) — the frontend never sees it. docs/ai-integration.md`}
+          note={`Active: ${provider.name}. The key lives in Go only (GEMINI_API_KEY env or git-ignored backend/.ai.env) — the frontend never sees it.${meters ? `\nSession usage:\n${meters}` : ""} docs/ai-integration.md`}
         />
         <Row
           icon="layers"
           name="Storage"
           status={`${backend.storage.engine === "sqlite" ? "SQLite" : "In-memory"} · boundary ready`}
           tone={backend.storage.engine === "sqlite" ? "ok" : "mock"}
-          note="Persistence interface in src/services/backend.ts; the SQLite implementation belongs in backend/storage/store.go (Go side)."
+          note="SQLite by default (backend/services/sqlite_storage.go, pure-Go driver), in-memory fallback. Workspaces, documents, changes, chat threads persist across restarts."
         />
         <Row
           icon="folder"
@@ -199,7 +208,7 @@ function SettingsDialog() {
           name="Document renderer"
           status="Mock structured renderer"
           tone="mock"
-          note="Documents render from the DocumentModel. pdf.js / docx-preview integrate per-format without touching app state. docs/document-rendering.md"
+          note="Sources render read-only from the DocumentModel (txt/md/docx extracted in Go); summaries edit in Slate with canonical blocks. docs/document-rendering.md"
         />
       </div>
       <Button variant="outline" className="mt-4 w-full" onClick={() => dispatch({ type: "settings.set", open: false })}>

@@ -158,14 +158,16 @@ is the as-is inventory.
    - Block/segment model: EXISTS (mock-authored today — `mock/data.ts:500`
      hand-written documents; real `.txt` arm emits conforming JSON via
      `openTextFile`, `backend/services/documents.go:86`).
-   - Slate integration: DOES NOT EXIST. Current summary editor is raw
-     `contentEditable` + `innerText`
-     (`frontend/src/features/reader/SummaryDocumentView.tsx:42`), no tree
-     model, formatting lossy by construction.
-   - Extraction to block/segment JSON: EXISTS for trivial `.txt`/`.md` only
-     (real, `os.ReadFile`, `backend/services/documents.go:86`). PDF / DOCX /
-     HTML extraction: UNIMPLEMENTED stubs (`documents.go:15`, `OpenFile`
-     `default:` arm at `documents.go:63` returns `ErrUnsupportedType`).
+    - Slate integration: EXISTS (`frontend/src/features/reader/slateAdapter.ts`
+      `toSlate`/`fromSlate`, `SummaryDocumentView.tsx` Slate editor; canonical
+      blocks stay the source of truth, decorations are transient).
+    - Extraction to block/segment JSON: EXISTS for `.txt`/`.md` (real,
+      `os` Stat-gated + bounded reads, `backend/services/documents.go`) and
+      `.docx` (stdlib ZIP+OOXML, `backend/services/docx.go`). Block IDs are
+      content-addressed and stable (`backend/services/blockids.go`); successful
+      extractions are cached in SQLite (`extract_cache`, root-anchored path +
+      mtime + size, 200-entry LRU). PDF / HTML extraction: UNIMPLEMENTED
+      (`default:` arm returns `ErrUnsupportedType` with a typed reason).
    - DOCX/PDF save-out: DOES NOT EXIST in any form.
 
 ---
