@@ -38,6 +38,9 @@ type Service interface {
 	// The UI uses it for the Settings status; Run with no key sinks an
 	// "error" event instead of calling the network.
 	Configured() bool
+	// UsageMeters renders session telemetry (per-provider calls/errors/
+	// token estimates/RPM + tool call counts) for the Settings dialog.
+	UsageMeters() string
 }
 
 // defaultGeminiModel is the model every operation targets. Change it in one
@@ -118,6 +121,19 @@ func (g *GeminiService) ProviderName() string {
 	return label
 }
 
+// UsageMeters renders session telemetry for the Settings dialog: one line
+// per provider plus tool call counts. Empty string when nothing ran yet.
+func (g *GeminiService) UsageMeters() string {
+	parts := []string{}
+	if u := usageSnapshot(); u != "" {
+		parts = append(parts, u)
+	}
+	if t := toolAuditSummary(); t != "" {
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, "\n")
+}
+
 // Name implements ModelBackend for the primary Gemini endpoint.
 func (g *GeminiService) Name() string { return "gemini" }
 
@@ -143,7 +159,8 @@ func (g *GeminiService) Generate(ctx context.Context, prompt string, maxTokens i
 }
 
 // generateWithFailover tries the preferred backend, then others on failure.
-// emitPhase may be nil.
+// emitPhase may be nil. It returns the winning backend name for usage
+// telemetry ("" when nothing was attempted, e.g. missing keys).
 //
 // Selection rules (05-multi-provider-apis.md):
 //   AI_PRIMARY=groq|openrouter → that secondary first (skip Gemini until it fails).
@@ -156,7 +173,7 @@ func (g *GeminiService) generateWithFailover(
 	prompt string,
 	maxTokens int,
 	emitPhase func(label string),
-) (string, error) {
+) (text, backend string, err error) {
 	mode := g.mode
 	if mode == "auto" {
 		mode = "single"
@@ -180,7 +197,7 @@ func (g *GeminiService) generateWithFailover(
 		}
 		return g.generate(ctx, prompt, maxTokens)
 	}
-	trySecondary := func(onlyName string) (string, error) {
+	trySecondary := func(onlyName string) (string, string, error) {
 		var localFirst error
 		for _, b := range g.secondary {
 			if !b.Configured() {
@@ -194,7 +211,7 @@ func (g *GeminiService) generateWithFailover(
 			}
 			text, err := b.Generate(ctx, prompt, maxTokens)
 			if err == nil {
-				return text, nil
+				return text, b.Name(), nil
 			}
 			if localFirst == nil {
 				localFirst = err
@@ -203,23 +220,23 @@ func (g *GeminiService) generateWithFailover(
 			}
 		}
 		if localFirst != nil {
-			return "", localFirst
+			return "", "", localFirst
 		}
-		return "", fmt.Errorf("no secondary backend configured")
+		return "", "", fmt.Errorf("no secondary backend configured")
 	}
 
 	// Preferred secondary first when AI_PRIMARY says so.
 	if preferSecondary {
-		text, err := trySecondary(g.primary)
+		text, name, err := trySecondary(g.primary)
 		if err == nil {
-			return text, nil
+			return text, name, nil
 		}
 		firstErr = err
 		// Fall through: try other secondaries, then Gemini, unless single-mode.
 		if mode != "single" {
-			text, err = trySecondary("")
+			text, name, err = trySecondary("")
 			if err == nil {
-				return text, nil
+				return text, name, nil
 			}
 			if firstErr == nil {
 				firstErr = err
@@ -230,29 +247,29 @@ func (g *GeminiService) generateWithFailover(
 				}
 				text, err = tryGemini()
 				if err == nil {
-					return text, nil
+					return text, "gemini", nil
 				}
 				firstErr = fmt.Errorf("%v; gemini: %v", firstErr, err)
 			}
 		}
 		if firstErr != nil {
-			return "", firstErr
+			return "", "", firstErr
 		}
-		return "", fmt.Errorf("AI key missing — add GROQ_API_KEY or GEMINI_API_KEY to .ai.env / backend/.ai.env and restart.")
+		return "", "", fmt.Errorf("AI key missing — add GROQ_API_KEY or GEMINI_API_KEY to .ai.env / backend/.ai.env and restart.")
 	}
 
 	// Default: Gemini first, then secondaries.
 	if g.ConfiguredPrimary() {
 		text, err := tryGemini()
 		if err == nil {
-			return text, nil
+			return text, "gemini", nil
 		}
 		firstErr = err
-		// Failover/auto: try secondary on any failure when a secondary exists.
-		// Single mode: only continue on rate-limit/unavailable class errors.
-		if mode == "single" && !isRateLimitOrUnavailable(err) {
-			return "", err
-		}
+	// Failover/auto: try secondary on any failure when a secondary exists.
+	// Single mode: only continue on rate-limit/unavailable class errors.
+	if mode == "single" && !isRateLimitOrUnavailable(err) {
+		return "", "gemini", err
+	}
 		if mode == "single" {
 			hasSec := false
 			for _, b := range g.secondary {
@@ -262,7 +279,7 @@ func (g *GeminiService) generateWithFailover(
 				}
 			}
 			if !hasSec {
-				return "", err
+				return "", "gemini", err
 			}
 		}
 		if emitPhase != nil {
@@ -270,9 +287,9 @@ func (g *GeminiService) generateWithFailover(
 		}
 	}
 
-	text, err := trySecondary("")
+	text, name, err := trySecondary("")
 	if err == nil {
-		return text, nil
+		return text, name, nil
 	}
 	if firstErr == nil {
 		firstErr = err
@@ -281,9 +298,9 @@ func (g *GeminiService) generateWithFailover(
 	}
 
 	if firstErr != nil {
-		return "", firstErr
+		return "", "", firstErr
 	}
-	return "", fmt.Errorf("AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to .ai.env / backend/.ai.env and restart.")
+	return "", "", fmt.Errorf("AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to .ai.env / backend/.ai.env and restart.")
 }
 
 // resolveAPIKey finds the Gemini key without ever hard-coding it. Precedence:
@@ -372,13 +389,20 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 		emit(models.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
 		return
 	}
+	// Repeatable one-shots skip the network on a fresh cache hit (plan 05
+	// §3.4). Chat and merges are never cached — they must stay fresh.
+	if cached, ok := explainCacheGet(op, req); ok {
+		emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, cached)})
+		return
+	}
 	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
-	text, err := g.generateWithFailover(ctx, prompt, maxTokens, func(label string) {
+	text, err := g.generateMetered(ctx, op, prompt, maxTokens, func(label string) {
 		emit(models.AIEvent{Type: "phase", Label: label})
 	})
 	if err != nil {
 		emit(models.AIEvent{Type: "error", Message: err.Error()})
 		return
 	}
+	explainCachePut(op, req, text)
 	emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, text)})
 }

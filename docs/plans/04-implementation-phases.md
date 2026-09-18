@@ -72,3 +72,11 @@ Each phase should leave the app shippable (no broken reader).
 - [x] Pending modifies as inline Slate decorations (click to accept/reject/revise); deletes/inserts stay card-based
 - [ ] PDF text-layer coordinates (needs a `pdfjs-dist` leaf — block offsets are the interim system)
 - [ ] Frontend windowed doc cache (open tabs still fully resident; backend cache covers re-extract cost)
+
+## Phase 11 — Provider policy + audit + autosave + DOCX fidelity
+- [x] Cost classes S/M/L + global semaphore (2 slots, "Waiting for AI capacity…" phase) + 5-min explain cache (oneshots only)
+- [x] Usage telemetry (per-provider calls/errors/token-est/RPM ring) + tool audit ring (names + paths only) → Settings via `App.AIMeters`
+- [x] Explicit per-turn tool budget (6 across rounds, was implicit)
+- [x] Gated summary autosave: debounced 3s, accepted/user content only (pending inserts excluded), silent success / honest failure toast
+- [x] DOCX reader: flat lists (`w:numPr` grouping) + tables as "a | b" rows, ordered token walk; writer: lists as "• " paragraphs
+- [ ] Arbitrary shell-exec tool — evaluated, rejected: Windows lacks grep/rg, Go-native `search_in_workspace` covers "find in docs" without leaving the Resolve jail (see `01-architecture-harness.md`)

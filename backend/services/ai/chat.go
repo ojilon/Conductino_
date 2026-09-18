@@ -9,7 +9,10 @@ import (
 	"Conductino/backend/models"
 )
 
-const maxToolRounds = 2
+const (
+	maxToolRounds  = 2
+	maxToolsPerTurn = 6 // hard budget across rounds (issue 17)
+)
 
 // runChatWithTools runs AI_CHAT with an optional tool loop:
 // model may emit <tool …/> tags; we execute guarded tools, re-prompt, then finish.
@@ -24,7 +27,7 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 	}
 
 	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
-	text, err := g.generateWithFailover(ctx, prompt, maxTokens, func(label string) {
+	text, err := g.generateMetered(ctx, models.OpChat, prompt, maxTokens, func(label string) {
 		emit(models.AIEvent{Type: "phase", Label: label})
 	})
 	if err != nil {
@@ -32,18 +35,21 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 		return
 	}
 
-	for round := 0; round < maxToolRounds; round++ {
+	toolsUsed := 0
+	for round := 0; round < maxToolRounds && toolsUsed < maxToolsPerTurn; round++ {
 		calls := ParseToolCalls(text)
 		if len(calls) == 0 || host == nil {
 			break
 		}
 		var results []string
 		for i, c := range calls {
-			if i >= 3 {
-				break // hard cap per round
+			if i >= 3 || toolsUsed >= maxToolsPerTurn {
+				break // hard cap per round and per turn
 			}
+			toolsUsed++
 			emit(models.AIEvent{Type: "phase", Phase: 1 + round, Label: fmt.Sprintf("Tool: %s", c.Name)})
 			r := host.Dispatch(c.Name, c.Args)
+			auditTool(c.Name, c.Args, r.OK) // issue 17: name + path only, never content
 			status := "ok"
 			if !r.OK {
 				status = "error"
@@ -55,7 +61,7 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 			strings.Join(results, "\n\n") +
 			"\n\n### Instruction\nUsing the tool results above, answer the user. Do not invent file contents. " +
 			"If you still need a tool, emit at most one more tool tag; otherwise reply in plain prose only."
-		text, err = g.generateWithFailover(ctx, follow, maxTokens, func(label string) {
+		text, err = g.generateMetered(ctx, models.OpChat, follow, maxTokens, func(label string) {
 			emit(models.AIEvent{Type: "phase", Label: label})
 		})
 		if err != nil {

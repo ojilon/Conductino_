@@ -151,6 +151,15 @@ func (b *Backend) StorageEngine() string {
 	return b.storage.Engine()
 }
 
+// UsageMeters exposes AI session telemetry (per-provider calls + tool
+// counts) for the Settings dialog. Empty when nothing ran yet.
+func (b *Backend) UsageMeters() string {
+	if b.ai == nil {
+		return ""
+	}
+	return b.ai.UsageMeters()
+}
+
 func (b *Backend) RunAI(ctx context.Context, req models.AIRequest, sink AIEventSink) error {
 	// Phase 6: if chat omitted summary content, load primary summary from DB.
 	// The summary snapshot is the BlocksJSON wire payload — the tool host

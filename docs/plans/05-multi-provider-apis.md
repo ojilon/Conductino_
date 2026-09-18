@@ -2,7 +2,7 @@
 
 > Branch: `feature/academic-harness-reader-ai`
 > Depends on: `02-backend-structure.md` (`services/ai/` package), `01-architecture-harness.md` (context packs, tools).
-> Status: **planning only** — no code until Phases 1–3 of `04-implementation-phases.md` land the single-provider path cleanly.
+> Status: **partially landed** — `ModelBackend` + Gemini/Groq/OpenRouter backends + failover + cost classes + semaphore + explain cache + usage/audit telemetry are in (`backend/services/ai/{service,backend,openai_compat,policy,usage}.go`); Settings shows live meters via `App.AIMeters`. Still open: tertiary OpenRouter default, map-reduce multi-source, soft daily budgets, persisted UsageEvents.
 
 ## 1. Why this exists
 

@@ -64,3 +64,43 @@ func TestDefaultSummaryDOCXName(t *testing.T) {
 		t.Fatalf("name=%s", n)
 	}
 }
+
+func TestParseListsAndTables(t *testing.T) {
+	xml := `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+		`<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>First item</w:t></w:r></w:p>` +
+		`<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Second item</w:t></w:r></w:p>` +
+		`<w:p><w:r><w:t>After list.</w:t></w:r></w:p>` +
+		`<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc>` +
+		`<w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr></w:tbl>` +
+		`</w:body></w:document>`
+	blocks, err := parseDocumentXML([]byte(xml), "test.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("want 3 blocks (list, para, table row), got %d: %+v", len(blocks), blocks)
+	}
+	if blocks[0].Type != "list" || len(blocks[0].ListItems) != 2 {
+		t.Fatalf("list block: %+v", blocks[0])
+	}
+	if blocks[1].Type != "paragraph" {
+		t.Fatalf("para block: %+v", blocks[1])
+	}
+	joined := ""
+	for _, s := range blocks[2].Segments {
+		joined += s.Text
+	}
+	if joined != "A1 | B1" {
+		t.Fatalf("table row = %q, want %q", joined, "A1 | B1")
+	}
+	// Stable IDs: same input twice → same IDs.
+	again, err := parseDocumentXML([]byte(xml), "test.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range blocks {
+		if blocks[i].ID != again[i].ID {
+			t.Fatalf("unstable id at %d: %s vs %s", i, blocks[i].ID, again[i].ID)
+		}
+	}
+}

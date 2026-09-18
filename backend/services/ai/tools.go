@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"Conductino/backend/models"
 )
@@ -64,6 +66,70 @@ type ToolResult struct {
 	Name    string
 	OK      bool
 	Content string
+}
+
+// Tool audit (issue 17): bounded ring of tool invocations for debugging and
+// usage review. Only names + relative paths are logged — never file content,
+// prompts, or proposal text (plan 02 §5).
+type toolAuditEntry struct {
+	At   int64  // Unix millis
+	Tool string // tool name
+	Arg  string // redacted arg summary (path / op+target / query)
+	OK   bool
+}
+
+const toolAuditCap = 100
+
+var (
+	toolAuditMu sync.Mutex
+	toolAudit   []toolAuditEntry
+)
+
+func auditTool(name string, args map[string]string, ok bool) {
+	arg := ""
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case ToolReadSource, ToolSearchWorkspace:
+		arg = args["path"] + args["query"]
+	case ToolProposeSummaryEdit:
+		arg = "op=" + args["op"] + " target=" + args["target"]
+	}
+	arg = strings.TrimSpace(arg)
+	if len(arg) > 120 {
+		arg = arg[:120]
+	}
+	toolAuditMu.Lock()
+	defer toolAuditMu.Unlock()
+	if len(toolAudit) >= toolAuditCap {
+		toolAudit = toolAudit[1:]
+	}
+	toolAudit = append(toolAudit, toolAuditEntry{
+		At:   time.Now().UnixMilli(),
+		Tool: name,
+		Arg:  arg,
+		OK:   ok,
+	})
+}
+
+// toolAuditSummary counts calls per tool for the usage line ("tools: 4 calls").
+func toolAuditSummary() string {
+	toolAuditMu.Lock()
+	defer toolAuditMu.Unlock()
+	if len(toolAudit) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	var order []string
+	for _, e := range toolAudit {
+		if _, ok := counts[e.Tool]; !ok {
+			order = append(order, e.Tool)
+		}
+		counts[e.Tool]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, t := range order {
+		parts = append(parts, fmt.Sprintf("%s×%d", t, counts[t]))
+	}
+	return "tools: " + strings.Join(parts, " ")
 }
 
 // Catalog returns a short system description of available tools for the prompt.

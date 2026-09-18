@@ -9,7 +9,7 @@
  * Phase 8: Save DOCX writes blocks to summaries/*.docx under the workspace.
  */
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createEditor,
   type Descendant,
@@ -349,6 +349,36 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
     }
   };
 
+  // Gated autosave (issues 16+29): the user's accept IS the gate. Debounced
+  // 3s after committed blocks settle, only accepted/user content is written
+  // — pending-insert blocks (changeId still pending) are excluded, and
+  // pending modify/delete never touch blocks until accept. Silent on
+  // success; honest toast only on failure. No-op in browser/mock mode.
+  const lastSaved = useRef<string>("");
+  const [autoState, setAutoState] = useState<"idle" | "saving" | "saved">("idle");
+  useEffect(() => {
+    const committed = doc.blocks.filter((b) => {
+      const ch = state.changes[b.changeId ?? ""];
+      return !(ch && ch.type === "insert" && ch.status === "pending");
+    });
+    const snapshot = JSON.stringify({ blocks: committed });
+    if (snapshot === lastSaved.current) return;
+    const t = setTimeout(() => {
+      lastSaved.current = snapshot;
+      setAutoState("saving");
+      writeSummaryDOCX(snapshot)
+        .then((path) => setAutoState(path ? "saved" : "idle"))
+        .catch((e: unknown) => {
+          setAutoState("idle");
+          dispatch({
+            type: "toast",
+            message: `Autosave failed: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        });
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [doc.blocks, state.changes, dispatch]);
+
   return (
     <div className="mx-auto max-w-[700px] px-8 py-6">
       <div className="mb-4 flex items-center justify-between border-b border-line pb-2.5 text-[12px] text-mute">
@@ -367,7 +397,11 @@ export default function SummaryDocumentView({ doc }: { doc: Document }) {
           <span className={cn("h-1.5 w-1.5 rounded-full", pending.length ? "bg-hay-300" : "bg-moss-200")} />
           {pending.length
             ? `${pending.length} pending change${pending.length === 1 ? "" : "s"}`
-            : "all changes reviewed"}
+            : autoState === "saving"
+              ? "saving…"
+              : autoState === "saved"
+                ? "all changes reviewed · saved"
+                : "all changes reviewed"}
         </span>
       </div>
 

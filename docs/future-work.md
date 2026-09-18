@@ -15,12 +15,12 @@
 | Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
-| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini via Go; key in `backend/.ai.env`) | `src/services/ai.ts`, `backend/services/ai.go` |
+| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/services/ai/` |
 | AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/services/ai.go` |
 | AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
 | Selection → AI action workflow | **WORKING** (block anchor + range offsets) | `DocumentView.tsx` |
 | Highlights / saved notes | **WORKING** (block-anchored; range-precise spans where measured) | `doc.highlight.add` |
-| Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based) | `SummaryDocumentView.tsx` |
+| Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based; gated autosave to DOCX) | `SummaryDocumentView.tsx` |
 | AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING** (tool + chat driven; user gatekeeps every change) | `change.*` actions |
 | Chat `@doc` targeting + region selection | **WORKING** (`mentionIds` + selection anchor; autocomplete in composer) | `state/mentions.ts`, `aiController.runChat` |
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |

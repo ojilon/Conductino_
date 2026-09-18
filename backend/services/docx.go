@@ -15,9 +15,11 @@ import (
 )
 
 // Phase 8: stdlib DOCX read/write (ZIP + OOXML). Zero extra deps, pure Go.
-// Fidelity is paragraph/run text + bold/italic — enough for summary files
-// and source reading. Tables/images/numbering are skipped (text-only stopgap
-// while a fuller library is evaluated; see tasks.md §DOCX).
+// Fidelity is paragraph/run text + bold/italic + headings + flat lists +
+// tables-as-"a | b" rows. Dropped: list levels, table grid, images,
+// numbering/footnotes (documented stopgap while a fuller library is
+// evaluated; see tasks.md §DOCX). Writer emits lists as "• " paragraphs —
+// readable on re-read, not round-trip-identical.
 
 const maxDocxBytes = 20 << 20 // 20 MiB
 
@@ -121,6 +123,16 @@ type wDocument struct {
 }
 type wBody struct {
 	Paragraphs []wParagraph `xml:"p"`
+	Tables     []wTable     `xml:"tbl"`
+}
+type wTable struct {
+	Rows []wRow `xml:"tr"`
+}
+type wRow struct {
+	Cells []wCell `xml:"tc"`
+}
+type wCell struct {
+	Paragraphs []wParagraph `xml:"p"`
 }
 type wParagraph struct {
 	Props *wPPr  `xml:"pPr"`
@@ -128,6 +140,10 @@ type wParagraph struct {
 }
 type wPPr struct {
 	Style *wStyle `xml:"pStyle"`
+	// Num marks a numbered/bulleted list paragraph (w:numPr). Presence is
+	// the signal; level/numbering defs are intentionally ignored (flat
+	// lists — see fidelity note at the top of this file).
+	Num *struct{} `xml:"numPr"`
 }
 type wStyle struct {
 	Val string `xml:"val,attr"`
@@ -146,42 +162,156 @@ type wText struct {
 
 func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 	cleaned := stripXMLNamespaces(data)
-	var doc wDocument
-	if err := xml.Unmarshal(cleaned, &doc); err != nil {
-		return nil, fmt.Errorf("xml: %w", err)
-	}
-	blocks := make([]docxBlock, 0, len(doc.Body.Paragraphs))
+	dec := xml.NewDecoder(bytes.NewReader(cleaned))
+	blocks := []docxBlock{}
 	seen := map[string]int{}
-	for _, p := range doc.Body.Paragraphs {
+	// take assigns a stable content-addressed ID (issues 7+27).
+	take := func(typ string, level int, text string) string {
+		occKey := typ + "\x00" + normalizeBlockText(text)
+		occ := seen[occKey]
+		seen[occKey] = occ + 1
+		return stableBlockID(relKey, typ, level, text, occ)
+	}
+	// Consecutive list paragraphs group into one list block (fidelity: flat,
+	// levels dropped — see file note).
+	var pendingList [][]docxSegment
+	var pendingText strings.Builder
+	flushList := func() {
+		if len(pendingList) == 0 {
+			return
+		}
 		if len(blocks) >= maxTextBlocks {
+			pendingList = nil
+			pendingText.Reset()
+			return
+		}
+		text := pendingText.String()
+		blocks = append(blocks, docxBlock{
+			ID: take("list", 0, text), Type: "list", ListItems: pendingList,
+		})
+		pendingList = nil
+		pendingText.Reset()
+	}
+	appendPara := func(typ string, level int, segs []docxSegment) {
+		if len(blocks) >= maxTextBlocks {
+			return
+		}
+		var full strings.Builder
+		for _, s := range segs {
+			full.WriteString(s.Text)
+		}
+		b := docxBlock{ID: take(typ, level, full.String()), Type: typ, Segments: segs}
+		if level > 0 {
+			b.Level = level
+		}
+		blocks = append(blocks, b)
+	}
+	// Ordered token walk: preserves document order across paragraphs and
+	// tables (struct unmarshalling would group all <p> before all <tbl>).
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
 			break
 		}
-		segs := make([]docxSegment, 0, len(p.Runs))
-		for _, r := range p.Runs {
-			var text strings.Builder
-			for _, t := range r.Texts {
-				text.WriteString(t.Value)
-			}
-			s := text.String()
-			if s == "" {
-				continue
-			}
-			seg := docxSegment{Text: s}
-			if r.Props != nil {
-				if r.Props.Bold != nil {
-					seg.Strong = true
-				}
-				if r.Props.Italic != nil {
-					seg.Em = true
-				}
-			}
-			segs = append(segs, seg)
+		if err != nil {
+			return nil, fmt.Errorf("xml: %w", err)
 		}
-		if len(segs) == 0 {
+		se, ok := tok.(xml.StartElement)
+		if !ok || (se.Name.Local != "p" && se.Name.Local != "tbl") {
 			continue
 		}
-		typ, level := "paragraph", 0
-		if p.Props != nil && p.Props.Style != nil {
+		// Only body-level elements: DecodeElement consumes the subtree, so
+		// table-cell paragraphs never reach this loop individually. Depth
+		// tracking keeps headers/footers out (body is depth 2 after
+		// document > body).
+		if se.Name.Local == "p" {
+			var p wParagraph
+			if err := dec.DecodeElement(&p, &se); err != nil {
+				return nil, fmt.Errorf("xml: %w", err)
+			}
+			typ, level, segs, isList := paraViewOf(p)
+			if len(segs) == 0 {
+				continue
+			}
+			if isList {
+				var full strings.Builder
+				for _, s := range segs {
+					full.WriteString(s.Text)
+				}
+				pendingList = append(pendingList, segs)
+				pendingText.WriteString(full.String() + "\n")
+				continue
+			}
+			flushList()
+			appendPara(typ, level, segs)
+			continue
+		}
+		var t wTable
+		if err := dec.DecodeElement(&t, &se); err != nil {
+			return nil, fmt.Errorf("xml: %w", err)
+		}
+		flushList()
+		// Tables have no block-model counterpart: one paragraph per row,
+		// cells joined with " | " (text preserved, grid dropped).
+		for _, row := range t.Rows {
+			var cells []string
+			for _, cell := range row.Cells {
+				var cp strings.Builder
+				for _, p := range cell.Paragraphs {
+					_, _, segs, _ := paraViewOf(p)
+					for _, s := range segs {
+						cp.WriteString(s.Text)
+					}
+					cp.WriteString(" ")
+				}
+				if c := strings.TrimSpace(cp.String()); c != "" {
+					cells = append(cells, c)
+				}
+			}
+			if len(cells) == 0 {
+				continue
+			}
+			joined := strings.Join(cells, " | ")
+			appendPara("paragraph", 0, []docxSegment{{Text: joined}})
+		}
+	}
+	flushList()
+	if len(blocks) == 0 {
+		blocks = append(blocks, docxBlock{ID: take("paragraph", 0, ""), Type: "paragraph", Segments: []docxSegment{{Text: ""}}})
+	}
+	return blocks, nil
+}
+
+// paraViewOf classifies one paragraph: heading level, run segments with
+// marks, and whether it is a list item (w:numPr present).
+func paraViewOf(p wParagraph) (typ string, level int, segs []docxSegment, isList bool) {
+	segs = make([]docxSegment, 0, len(p.Runs))
+	for _, r := range p.Runs {
+		var text strings.Builder
+		for _, t := range r.Texts {
+			text.WriteString(t.Value)
+		}
+		s := text.String()
+		if s == "" {
+			continue
+		}
+		seg := docxSegment{Text: s}
+		if r.Props != nil {
+			if r.Props.Bold != nil {
+				seg.Strong = true
+			}
+			if r.Props.Italic != nil {
+				seg.Em = true
+			}
+		}
+		segs = append(segs, seg)
+	}
+	typ = "paragraph"
+	if p.Props != nil {
+		if p.Props.Num != nil {
+			isList = true
+		}
+		if p.Props.Style != nil {
 			style := strings.ToLower(p.Props.Style.Val)
 			switch {
 			case strings.Contains(style, "heading1") || style == "title":
@@ -194,23 +324,8 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 				typ, level = "heading", 2
 			}
 		}
-		var full strings.Builder
-		for _, s := range segs {
-			full.WriteString(s.Text)
-		}
-		occKey := typ + "\x00" + normalizeBlockText(full.String())
-		occ := seen[occKey]
-		seen[occKey] = occ + 1
-		b := docxBlock{ID: stableBlockID(relKey, typ, level, full.String(), occ), Type: typ, Segments: segs}
-		if level > 0 {
-			b.Level = level
-		}
-		blocks = append(blocks, b)
 	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, docxBlock{ID: stableBlockID(relKey, "paragraph", 0, "", 0), Type: "paragraph", Segments: []docxSegment{{Text: ""}}})
-	}
-	return blocks, nil
+	return typ, level, segs, isList
 }
 
 func stripXMLNamespaces(data []byte) []byte {
@@ -302,6 +417,16 @@ func buildDocumentXML(blocks []docxBlock) string {
 	b.WriteString(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">`)
 	b.WriteString(`<w:body>`)
 	for _, blk := range blocks {
+		// Lists have no numbering.xml in this minimal package: one bullet
+		// paragraph per item ("• " prefix). Re-reading yields plain
+		// paragraphs — readable, not round-trip-identical (documented).
+		if blk.Type == "list" && len(blk.ListItems) > 0 {
+			for _, item := range blk.ListItems {
+				item := append([]docxSegment{{Text: "• "}}, item...)
+				writeParagraphXML(&b, docxBlock{ID: blk.ID, Type: "paragraph", Segments: item})
+			}
+			continue
+		}
 		writeParagraphXML(&b, blk)
 	}
 	b.WriteString(`<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>`)

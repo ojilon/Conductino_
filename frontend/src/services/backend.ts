@@ -32,6 +32,8 @@ interface WailsApp {
   LibraryRoot(): Promise<string>;
   /** Phase 8: write summary blocks as .docx under library root. */
   WriteSummaryDOCX(relPath: string, blocksJSON: string): Promise<string>;
+  /** Session AI telemetry (per-provider calls + tool counts), "" when idle. */
+  AIMeters(): Promise<string>;
 }
 
 declare global {
@@ -260,4 +262,20 @@ export async function writeSummaryDOCX(
   const app = wailsApp();
   if (!app || typeof app.WriteSummaryDOCX !== "function") return null;
   return app.WriteSummaryDOCX(relPath, blocksJSON);
+}
+
+/**
+ * AI session telemetry for Settings (per-provider calls/errors/token
+ * estimates/RPM + tool call counts). Null in browser/mock mode or when
+ * nothing ran yet.
+ */
+export async function getAIMeters(): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.AIMeters !== "function") return null;
+  try {
+    const s = await app.AIMeters();
+    return s?.trim() ? s : null;
+  } catch {
+    return null;
+  }
 }

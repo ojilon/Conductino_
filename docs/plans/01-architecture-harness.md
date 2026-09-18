@@ -111,7 +111,10 @@ No shell, no arbitrary path, no write to sources. The summary is a living
 document: the model may redefine, restructure, or remove — never
 append-only. The user gatekeeps every proposal with approve / revise.
 
-No shell, no arbitrary path, no write to sources.
+No shell, no arbitrary path, no write to sources. (Evaluated a read-only
+shell tool and rejected it: Windows targets lack grep/rg, and Go-native
+`search_in_workspace` answers "find in docs" without ever leaving the
+`Resolve` jail or spawning processes on a Celeron box.)
 Tool results are injected into the same turn’s model context. Streaming
 phases already exist (`onPhase`); extend with tool-phase labels.
 

@@ -126,6 +126,12 @@ func (a *App) StorageEngine() string {
 	return a.backend.StorageEngine()
 }
 
+// AIMeters reports AI session telemetry for the Settings dialog
+// (per-provider calls/errors/token estimates/RPM + tool call counts).
+func (a *App) AIMeters() string {
+	return a.backend.UsageMeters()
+}
+
 // RunAI streams an AI operation. Events are emitted as "ai:event" (legacy).
 // New code should call StreamAIRequest, which emits "ai://event" — the
 // channel services/ai.ts actually subscribes to.
