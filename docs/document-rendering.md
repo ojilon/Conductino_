@@ -45,7 +45,7 @@ navigation, tabs — works on the model and survives a renderer swap.
 
 | Format | Suggested library | Where |
 |---|---|---|
-| **PDF** | Go extraction-first (reuses selection/AI immediately): `pdfcpu` (Apache-2.0, memory-efficient) or `ledongthuc/pdf` (tiny, text-only) — full evaluation in `tasks.md` §4, which also rules out `unipdf` (license/weight) and cgo bindings. Canvas alternative: `pdfjs-dist` per page | New `case` arm in `Documents.OpenFile` emitting block/segment JSON; on failure surface a typed reason (see `tasks.md` §1.2) instead of falling into the mock path. |
+| **PDF** | Extraction: `ledongthuc/pdf` LANDED (pure Go, per-page text rows → paragraph recovery by vertical gap, `page`-break blocks, stable IDs). Canvas: `pdfjs-dist` LANDED (`PdfView`, lazy raster + text layer, worker via `public/pdf.worker.min.mjs`). Limits: text-layer PDFs only; tables/images/layout dropped | `backend/services/pdf.go`; `frontend/src/features/reader/PdfView.tsx` |
 | **DOCX** | `unidoc/unioffice` in Go → blocks (check license before adopting; same library later covers DOCX save-out) — stdlib `archive/zip`+`encoding/xml` text-only arm as stopgap; full evaluation in `tasks.md` §4 | Same slot: new `OpenFile` arm. |
 | **HTML / web** | Real browser engine for web sources (see architecture.md §Browser); `golang.org/x/net/html` for saved HTML files | `MockWebPage` slot in the browser; new `OpenFile` arm for saved files. |
 | **Plain text** | REAL today (`openTextFile`: blank-line paragraphs, caps) | no work needed. |

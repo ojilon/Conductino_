@@ -187,7 +187,11 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 		}
 		text := pendingText.String()
 		blocks = append(blocks, docxBlock{
-			ID: take("list", 0, text), Type: "list", ListItems: pendingList,
+			// Segments must be non-nil: nil marshals to JSON null and
+			// crashes frontend .map() calls (ReaderMode openFile). The
+			// list's text lives in ListItems; Segments stays empty-but-array.
+			ID: take("list", 0, text), Type: "list",
+			Segments: []docxSegment{}, ListItems: pendingList,
 		})
 		pendingList = nil
 		pendingText.Reset()

@@ -31,10 +31,22 @@ export function BlockText({ block, docId }: { block: DocumentBlock; docId: strin
   if (block.type === "heading") {
     return (
       <h2 className="mt-8 font-serif text-[19px] font-bold text-ink-900 first:mt-0">
-        {block.segments.map((s, i) => (
+        {(block.segments ?? []).map((s, i) => (
           <span key={i}>{s.text}</span>
         ))}
       </h2>
+    );
+  }
+
+  // Page-break anchor (PDF extraction emits one per page): a thin rule the
+  // canvas leaf and chat both key pages by. Carries data-block-id like text.
+  if (block.type === "page") {
+    return (
+      <div className="my-6 flex items-center gap-3 text-mute" aria-hidden>
+        <span className="h-px flex-1 bg-line-soft" />
+        <span className="text-[10.5px] font-medium uppercase tracking-wide">page</span>
+        <span className="h-px flex-1 bg-line-soft" />
+      </div>
     );
   }
 
@@ -43,7 +55,7 @@ export function BlockText({ block, docId }: { block: DocumentBlock; docId: strin
       <ul className="my-4 list-disc space-y-2 pl-6 doc-body">
         {(block.listItems ?? []).map((item, i) => (
           <li key={i}>
-            {item.map((s, j) => (
+            {(item ?? []).map((s, j) => (
               <span key={j} className={s.em ? "italic" : undefined}>
                 {s.text}
               </span>
@@ -57,7 +69,7 @@ export function BlockText({ block, docId }: { block: DocumentBlock; docId: strin
   // Range-precise highlight (issue 8): a saved note with offsets underlines
   // exactly the span. Single-segment blocks split cleanly; multi-segment
   // blocks keep the whole-block treatment below (no style loss).
-  const full = block.segments.map((s) => s.text).join("");
+  const full = (block.segments ?? []).map((s) => s.text).join("");
   const ranged = doc?.highlights.find(
     (h) => h.blockId === block.id && h.range && h.range.end > h.range.start,
   );
@@ -74,7 +86,7 @@ export function BlockText({ block, docId }: { block: DocumentBlock; docId: strin
 
   return (
     <p className={cn("my-4 doc-body", noted && "underline decoration-hay-300 decoration-[3px] underline-offset-[6px]")}>
-      {block.segments.map((s, i) =>
+      {(block.segments ?? []).map((s, i) =>
         s.highlightId ? (
           <mark key={i} className="rounded-[3px] bg-moss-100 px-0.5 text-moss-700">
             {s.text}

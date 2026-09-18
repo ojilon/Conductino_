@@ -34,6 +34,8 @@ interface WailsApp {
   WriteSummaryDOCX(relPath: string, blocksJSON: string): Promise<string>;
   /** Session AI telemetry (per-provider calls + tool counts), "" when idle. */
   AIMeters(): Promise<string>;
+  /** Raw workspace bytes (base64) for renderers needing originals (PDF canvas). */
+  ReadRawFile(path: string): Promise<string>;
 }
 
 declare global {
@@ -278,4 +280,18 @@ export async function getAIMeters(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Raw workspace bytes for renderers needing originals (PDF canvas leaf).
+ * Resolve-jailed on the Go side; null without the desktop bridge.
+ */
+export async function openRawFile(path: string): Promise<Uint8Array | null> {
+  const app = wailsApp();
+  if (!app || typeof app.ReadRawFile !== "function") return null;
+  const b64 = await app.ReadRawFile(path);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }

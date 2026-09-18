@@ -139,8 +139,8 @@ export function sameBlocks(a: DocumentBlock[], b: DocumentBlock[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i].id !== b[i].id || a[i].type !== b[i].type) return false;
-    const ta = a[i].segments.map((s) => s.text).join("");
-    const tb = b[i].segments.map((s) => s.text).join("");
+    const ta = (a[i].segments ?? []).map((s) => s.text).join("");
+    const tb = (b[i].segments ?? []).map((s) => s.text).join("");
     if (ta !== tb) return false;
   }
   return true;

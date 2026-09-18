@@ -328,11 +328,15 @@ func resolveAPIKey() string {
 // readKeyFile parses a KEY=VALUE dotenv file and returns the value for name.
 // Blank lines and # comments are skipped; surrounding quotes are stripped.
 // A missing or unreadable file yields "" — the caller tries the next source.
+// Last occurrence wins (standard dotenv behavior), so a user can override an
+// earlier line by appending below. Trailing " # comment" is stripped —
+// without this, `AI_MODE=auto # comment` would parse as a garbage mode.
 func readKeyFile(path, name string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
+	found := ""
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -343,10 +347,13 @@ func readKeyFile(path, name string) string {
 			continue
 		}
 		val = strings.TrimSpace(val)
+		if i := strings.Index(val, " #"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
 		val = strings.Trim(val, `"'`)
-		return strings.TrimSpace(val)
+		found = strings.TrimSpace(val)
 	}
-	return ""
+	return found
 }
 
 // Run executes one AI operation, emitting coarse progress ("phase") events

@@ -65,8 +65,30 @@ func TestDefaultSummaryDOCXName(t *testing.T) {
 	}
 }
 
-func TestParseListsAndTables(t *testing.T) {
+// List blocks must marshal segments:[] (never null): a nil slice encodes
+// to JSON null, which crashed ReaderMode openFile (`b.segments.map` on
+// null) as an uncaught promise rejection with no toast.
+func TestListBlocksNeverNullSegments(t *testing.T) {
 	xml := `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+		`<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Only item</w:t></w:r></w:p>` +
+		`</w:body></w:document>`
+	blocks, err := parseDocumentXML([]byte(xml), "list.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].Type != "list" {
+		t.Fatalf("blocks=%+v", blocks)
+	}
+	wire, err := BlocksToJSON(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(wire, `"segments":null`) {
+		t.Fatalf("null segments in wire: %s", wire)
+	}
+}
+
+func TestParseListsAndTables(t *testing.T) {	xml := `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
 		`<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>First item</w:t></w:r></w:p>` +
 		`<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Second item</w:t></w:r></w:p>` +
 		`<w:p><w:r><w:t>After list.</w:t></w:r></w:p>` +

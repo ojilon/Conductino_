@@ -26,7 +26,7 @@
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
-| PDF / DOCX rendering & extraction | **PARTIAL** (txt/md/docx-stdlib real, stable IDs, extract cache; PDF renders as typed `unsupported`) | `DocumentView.tsx`, `backend/services/documents.go` |
+| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/services/pdf.go`, `documents.go` |
 | Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + `.txt` extraction real; storage + AI mock** | `backend/services/` |
 | Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |

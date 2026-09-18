@@ -3,6 +3,7 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,6 +119,31 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 		})
 	}
 	return &opened, nil
+}
+
+// maxRawFileBytes caps raw file serving for the PDF canvas leaf (issue 18).
+const maxRawFileBytes = 30 << 20 // 30 MiB
+
+// ReadRawFile returns base64-encoded bytes of a workspace file for renderers
+// that need the original bytes (PDF canvas leaf). Resolve-jailed like
+// OpenFile; oversized files are refused, never streamed partially.
+func (b *Backend) ReadRawFile(path string) (string, error) {
+	abs, err := b.fs.Resolve(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() || info.Size() > maxRawFileBytes {
+		return "", fmt.Errorf("file not servable: %s", path)
+	}
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
 // ShowContainingFolder reveals a workspace path in the OS file manager.

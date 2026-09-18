@@ -22,9 +22,10 @@ const (
 )
 
 // Allowed source extensions for read_source (lowercase, no dot).
+// txt/md via the text arm; pdf via text-layer extraction; docx via stdlib
+// OOXML. Rejections stay explicit so tools never invent content.
 var allowedReadExt = map[string]bool{
-	"txt": true, "md": true, "markdown": true,
-	// PDF/DOCX land later; reject until extractors exist so tools never invent content.
+	"txt": true, "md": true, "markdown": true, "pdf": true, "docx": true,
 }
 
 // PathResolver is the workspace containment boundary (Filesystem.Resolve + tree).
@@ -182,7 +183,8 @@ func ParseToolCalls(text string) []struct {
 			if k == "name" {
 				continue
 			}
-			args[k] = a[2]
+			// Values serialized by toolCallToTag are XML-escaped.
+			args[k] = xmlAttrUnescape(a[2])
 		}
 		out = append(out, struct {
 			Name string
@@ -195,6 +197,12 @@ func ParseToolCalls(text string) []struct {
 // StripToolTags removes tool XML so the final answer is clean prose.
 func StripToolTags(text string) string {
 	return strings.TrimSpace(toolCallRe.ReplaceAllString(text, ""))
+}
+
+// xmlAttrUnescape reverses toolCallToTag escaping (openai_compat.go).
+func xmlAttrUnescape(s string) string {
+	r := strings.NewReplacer(`&quot;`, `"`, `&lt;`, `<`, `&gt;`, `>`, `&amp;`, `&`)
+	return r.Replace(s)
 }
 
 // Dispatch runs one tool with Resolve + extension guards.

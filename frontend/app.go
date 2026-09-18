@@ -94,6 +94,12 @@ func (a *App) ShowContainingFolder(path string) (string, error) {
 	return a.backend.ShowContainingFolder(path)
 }
 
+// ReadRawFile serves base64-encoded workspace bytes for renderers needing
+// originals (PDF canvas leaf). Resolve-jailed; oversized files are refused.
+func (a *App) ReadRawFile(path string) (string, error) {
+	return a.backend.ReadRawFile(path)
+}
+
 // OpenFile extracts a document from a path under the library root.
 // Returns OpenedDocument (BlocksJSON wire payload + typed Reason on failure),
 // matching Documents.OpenFile — never a fabricated document.

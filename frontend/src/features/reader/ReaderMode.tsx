@@ -18,6 +18,7 @@ import ReaderSidebar from "./ReaderSidebar";
 import ReaderTabs, { labelForPath } from "./ReaderTabs";
 import SourceDocumentView from "./DocumentView";
 import SummaryDocumentView from "./SummaryDocumentView";
+import PdfView from "./PdfView";
 import AIReadingPanel from "./AIReadingPanel";
 
 /** Human-readable label per typed open failure (tasks.md 1.2). */
@@ -145,24 +146,39 @@ export default function ReaderMode() {
       return;
     }
     let blocks: DocumentBlock[];
+    let firstText = "";
     try {
       const parsed: unknown = JSON.parse(opened.blocksJSON);
-      blocks = (parsed as { blocks: DocumentBlock[] }).blocks;
-      if (!Array.isArray(blocks)) throw new Error("bad blocks shape");
+      const raw = (parsed as { blocks: DocumentBlock[] }).blocks;
+      if (!Array.isArray(raw)) throw new Error("bad blocks shape");
+      // Normalize: Go nil slices marshal to JSON null, and any single null
+      // (segments/listItems) used to throw past this try as an uncaught
+      // promise rejection with no toast. Coerce here so every consumer below
+      // (firstText, store, renderers) sees arrays.
+      blocks = raw.map((b) => ({
+        ...b,
+        segments: Array.isArray(b.segments) ? b.segments : [],
+        listItems: b.type === "list" && Array.isArray(b.listItems) ? b.listItems : b.listItems,
+      }));
+      firstText = blocks
+        .map((b) => [...(b.segments ?? []), ...(b.listItems ?? []).flat()].map((s) => s.text).join(""))
+        .find((t) => t.trim()) ?? "";
     } catch {
       dispatch({ type: "toast", message: `Could not open ${node.label}: unexpected content from the extractor` });
       return;
     }
     const sourceId = uid("src");
     const docId = uid("doc");
-    const firstText = blocks
-      .map((b) => b.segments.map((s) => s.text).join(""))
-      .find((t) => t.trim()) ?? "";
     const workspaceId = state.workspace.activeId ?? undefined;
+    // Format follows the extractor (Go Kind), falling back to the file
+    // extension: pdf → canvas leaf, docx/md/txt → block views.
+    const format = (opened.kind === "pdf" || opened.kind === "docx" || opened.kind === "text")
+      ? opened.kind
+      : ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : "text";
     const source: Source = {
       id: sourceId,
       workspaceId,
-      kind: "text",
+      kind: format,
       title: opened.title || labelForPath(node.label),
       origin: node.path,
       typeLabel: `${ext.toUpperCase()} document`,
@@ -181,7 +197,7 @@ export default function ReaderMode() {
         sourceId,
         metadata: {
           title: source.title,
-          format: "text",
+          format,
           pageCount: opened.pageCount ?? 1,
           path: node.path,
           rootPath: opened.root ?? currentRoot ?? undefined,
@@ -232,7 +248,13 @@ export default function ReaderMode() {
               const active = tabId === session.activeTabId;
               return (
                 <div key={tabId} className={active ? "block min-h-full" : "hidden"}>
-                  {d.kind === "summary" ? <SummaryDocumentView doc={d} /> : <SourceDocumentView doc={d} />}
+                  {d.kind === "summary" ? (
+                    <SummaryDocumentView doc={d} />
+                  ) : d.metadata.format === "pdf" ? (
+                    <PdfView doc={d} />
+                  ) : (
+                    <SourceDocumentView doc={d} />
+                  )}
                 </div>
               );
             })

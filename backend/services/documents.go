@@ -39,8 +39,8 @@ type DocumentService interface {
 	OpenFile(absPath, relKey string) (models.OpenedDocument, error)
 }
 
-// ErrUnsupportedType signals "no extractor for this extension yet" (PDF,
-// … until their arms land). DOCX is supported as of Phase 8.
+// ErrUnsupportedType signals "no extractor for this extension yet" (HTML,
+// … until their arms land). TXT/MD/PDF/DOCX are supported.
 var ErrUnsupportedType = fmt.Errorf("unsupported file type for extraction")
 
 // OpenError is a classified open failure (tasks.md 1.2): the Reason lets the
@@ -101,6 +101,9 @@ func (d *Documents) OpenFile(absPath, relKey string) (models.OpenedDocument, err
 		// Trivial arm: plain text reads directly, no parser dependency.
 		// Proves the click → path → content pipe end-to-end.
 		return openTextFile(absPath, relKey)
+	case "pdf":
+		// Text-layer extraction (pure Go, per-page blocks + page breaks).
+		return openPdfFile(absPath, relKey)
 	case "docx":
 		// Phase 8: stdlib ZIP+OOXML text extraction (paragraph/run + bold/italic).
 		return openDocxFile(absPath, relKey)
@@ -125,6 +128,17 @@ type textBlock struct {
 
 type textSegment struct {
 	Text string `json:"text"`
+}
+
+// marshalTextBlocks encodes blocks to the {blocks:[...]} wire shape with
+// encoding/json — never string-concatenated — so arbitrary file content
+// cannot break the wire format.
+func marshalTextBlocks(blocks []textBlock) (string, error) {
+	wire, err := json.Marshal(map[string]any{"blocks": blocks})
+	if err != nil {
+		return "", err
+	}
+	return string(wire), nil
 }
 
 const (
@@ -203,14 +217,14 @@ func openTextFile(absPath, relKey string) (models.OpenedDocument, error) {
 	if len(blocks) == 0 {
 		blocks = append(blocks, textBlock{ID: stableBlockID(relKey, "paragraph", 0, "", 0), Type: "paragraph", Segments: []textSegment{{Text: ""}}})
 	}
-	wire, err := json.Marshal(map[string]any{"blocks": blocks})
+	wire, err := marshalTextBlocks(blocks)
 	if err != nil {
 		return models.OpenedDocument{}, err
 	}
 	base := filepath.Base(absPath)
 	return models.OpenedDocument{
 		Title:      strings.TrimSuffix(base, filepath.Ext(base)),
-		BlocksJSON: string(wire),
+		BlocksJSON: wire,
 		PageCount:  1,
 		Kind:       "text",
 	}, nil

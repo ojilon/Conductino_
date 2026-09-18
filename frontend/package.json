@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "clsx": "2.1.1",
+    "pdfjs-dist": "^6.3.289",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "slate": "0.126.2",

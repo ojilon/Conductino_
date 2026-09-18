@@ -84,8 +84,7 @@ func TestListWorkspace(t *testing.T) {
 	}
 }
 
-func TestProposeSummaryEdit(t *testing.T) {
-	h := &ToolHost{}
+func TestProposeSummaryEdit(t *testing.T) {	h := &ToolHost{}
 	r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"text": "ATP is driven by proton motive force."})
 	if !r.OK || h.LastProposal().NewText == "" {
 		t.Fatalf("propose: %+v", r)

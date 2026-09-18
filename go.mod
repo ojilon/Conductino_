@@ -3,6 +3,7 @@ module Conductino
 go 1.25.0
 
 require (
+	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
 	github.com/wailsapp/wails/v2 v2.15.0
 	modernc.org/sqlite v1.34.5
 )

@@ -80,3 +80,17 @@ Each phase should leave the app shippable (no broken reader).
 - [x] Gated summary autosave: debounced 3s, accepted/user content only (pending inserts excluded), silent success / honest failure toast
 - [x] DOCX reader: flat lists (`w:numPr` grouping) + tables as "a | b" rows, ordered token walk; writer: lists as "• " paragraphs
 - [ ] Arbitrary shell-exec tool — evaluated, rejected: Windows lacks grep/rg, Go-native `search_in_workspace` covers "find in docs" without leaving the Resolve jail (see `01-architecture-harness.md`)
+
+## Phase 12 — PDF extraction + canvas leaf (pnpm-managed)
+- [x] `pdfjs-dist` via pnpm (never npm — `pnpm-lock.yaml` is canonical; `public/pdf.worker.min.mjs` ships in dist)
+- [x] Go text-layer extraction (`ledongthuc/pdf`, pure Go): per-page blocks + `page`-type break anchors, stable IDs, 50 MiB / 500-page caps
+- [x] `read_source` + `search_in_workspace` accept pdf/docx (both extract for real now)
+- [x] `App.ReadRawFile` bridge (Resolve-jailed base64, 30 MiB cap) → `openRawFile` TS helper
+- [x] `PdfView` canvas leaf: lazy per-page raster (IntersectionObserver, far pages release canvases) + pdf.js text layer for native selection
+- [x] Page containers anchor to extraction page-break blocks (`data-block-id`) — chat/AI stack unchanged
+- [ ] Scanned/image-only PDFs (no text layer — documented limitation, no OCR planned)
+
+## Phase 13 — Native function tools (fix "Tool choice is none")
+- [x] Declare the 5 tools as OpenAI function schemas (`tool_choice: auto`) — tool-trained models (gpt-oss) no longer emit undeclared calls
+- [x] Translate native `tool_calls` back to internal `<tool>` tags (XML-escaped round-trip); text-embedded tags still parse as fallback
+- [x] No-tools retry for endpoints without function calling; "tool choice" advances the model fallback chain

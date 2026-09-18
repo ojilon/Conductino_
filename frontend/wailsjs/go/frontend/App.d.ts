@@ -3,6 +3,8 @@
 import {services} from '../models';
 import {models} from '../models';
 
+export function AIMeters():Promise<string>;
+
 export function AppendChatMessage(arg1:services.ChatMessageRecord):Promise<void>;
 
 export function LibraryRoot():Promise<string>;
@@ -26,6 +28,8 @@ export function LoadPrimarySummary(arg1:string):Promise<services.DocumentRecord>
 export function LoadThread(arg1:string):Promise<services.ChatThreadRecord>;
 
 export function OpenFile(arg1:string):Promise<models.OpenedDocument>;
+
+export function ReadRawFile(arg1:string):Promise<string>;
 
 export function ResolvePath(arg1:string):Promise<string>;
 
