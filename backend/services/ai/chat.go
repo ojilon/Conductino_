@@ -10,7 +10,10 @@ import (
 )
 
 const (
-	maxToolRounds  = 2
+	// 3 rounds so a full locate → read → retry sequence fits: round 0
+	// discovers (list_workspace), round 1 reads (possibly a did-you-mean
+	// miss), round 2 executes the corrected retry. Budget below caps cost.
+	maxToolRounds   = 3
 	maxToolsPerTurn = 6 // hard budget across rounds (issue 17)
 )
 
