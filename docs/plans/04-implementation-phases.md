@@ -94,3 +94,9 @@ Each phase should leave the app shippable (no broken reader).
 - [x] Declare the 5 tools as OpenAI function schemas (`tool_choice: auto`) — tool-trained models (gpt-oss) no longer emit undeclared calls
 - [x] Translate native `tool_calls` back to internal `<tool>` tags (XML-escaped round-trip); text-embedded tags still parse as fallback
 - [x] No-tools retry for endpoints without function calling; "tool choice" advances the model fallback chain
+
+## Phase 14 — Backend resplit + paged source reading (planned: 06 + 07)
+- [ ] 06 steps 1–3: carve `extract/` → `tools/` → `usage/` (aliases, then delete)
+- [ ] 06 steps 4–6: split `models/`, bridge regroup, drop aliases
+- [ ] 07 steps 1–3: `extract_cache` md/page-map columns, normalize, window fn
+- [ ] 07 steps 4–6: `read_source` pages/offset/limit + envelope, `App.ReadSourcePage`, `path:page` search hits

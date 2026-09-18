@@ -102,7 +102,7 @@ Minimal tool set (Go, invoked only by the AI service loop):
 | Tool | Effect | Guard |
 |---|---|---|
 | `list_workspace` | tree under root | root only |
-| `read_source` | text extract for path/id | Resolve containment + allowed ext |
+| `read_source` | text extract for path/id; stem + fuzzy did-you-mean on near-miss | Resolve containment + allowed ext (txt/md/pdf/docx) |
 | `read_summary` | current summary content | workspace’s summary only |
 | `propose_summary_edit` | create DocumentChange(s): `op=insert\|modify\|delete`, `target`, `text` | summary id must match mapping; user accepts in UI |
 | `search_in_workspace` | quoted keyword snippets over readable files | root jail + ext allowlist + file/match/output caps |

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -148,7 +149,8 @@ You may call at most two tools before answering. Use ONLY this XML form on its o
 
 Rules:
 - Paths are relative to the open research folder. Never use absolute paths or "..".
-- read_source is limited to .txt/.md. If unsupported, say so.
+- read_source reads .txt/.md/.pdf/.docx. If the exact name is slightly off
+  (missing extension, typo), you get a did-you-mean list — retry with it.
 - Prefer search_in_workspace over guessing file contents when the user asks
   "where", "which file", or "find" — it returns quoted snippets, never full dumps.
 - The summary is a living document: harmonize new material with what is already
@@ -278,6 +280,24 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 	if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: "path rejected: must be relative and inside workspace"}
 	}
+	// Resolve against the live tree first: exact (case-insensitive) →
+	// stem-with-extension ("Summary" → "Summary.docx") → did-you-mean.
+	// Models regularly drop extensions or mistype a letter; without this
+	// every near-miss becomes "can't read the file".
+	note := ""
+	if canonical, suggestions := h.resolveSourcePath(rel); canonical != "" {
+		if !strings.EqualFold(canonical, rel) {
+			note = fmt.Sprintf("Resolved %q to %q.\n", rel, canonical)
+		}
+		rel = canonical
+	} else if len(suggestions) > 0 {
+		quoted := make([]string, 0, len(suggestions))
+		for _, s := range suggestions {
+			quoted = append(quoted, fmt.Sprintf("%q", s))
+		}
+		return ToolResult{Name: ToolReadSource, OK: false, Content: fmt.Sprintf(
+			"file %q not found in workspace — did you mean: %s?", rel, strings.Join(quoted, ", "))}
+	}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(rel), "."))
 	if !allowedReadExt[ext] {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: fmt.Sprintf("extension .%s not readable via tools yet", ext)}
@@ -291,6 +311,15 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: "could not read file"}
 	}
 	if opened.Reason != "" {
+		// A missing file after a jail-clean resolve gets suggestions too.
+		if _, suggestions := h.resolveSourcePath(rel); len(suggestions) > 0 {
+			quoted := make([]string, 0, len(suggestions))
+			for _, s := range suggestions {
+				quoted = append(quoted, fmt.Sprintf("%q", s))
+			}
+			return ToolResult{Name: ToolReadSource, OK: false, Content: fmt.Sprintf(
+				"could not read %q (%s) — did you mean: %s?", rel, opened.Detail, strings.Join(quoted, ", "))}
+		}
 		return ToolResult{Name: ToolReadSource, OK: false, Content: opened.Detail}
 	}
 	text := blocksJSONToPlain(opened.BlocksJSON)
@@ -300,8 +329,143 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 	return ToolResult{
 		Name:    ToolReadSource,
 		OK:      true,
-		Content: fmt.Sprintf("File %q (title %q):\n%s", rel, opened.Title, text),
+		Content: fmt.Sprintf("%sFile %q (title %q):\n%s", note, rel, opened.Title, text),
 	}
+}
+
+// resolveSourcePath maps a model-typed path to the canonical tree path.
+// Returns ("", nil) when the tree is unavailable (caller tries direct) or
+// ("", suggestions) when nothing matches. Matching order: exact
+// case-insensitive → unique stem (extension-insensitive) → normalized
+// fuzzy containment, capped at 3 suggestions.
+func (h *ToolHost) resolveSourcePath(rel string) (string, []string) {
+	if h.FS == nil {
+		return "", nil
+	}
+	root, err := h.FS.ListRoot()
+	if err != nil || root == nil {
+		return "", nil
+	}
+	var files []string
+	var walk func(n *models.FileTreeNode)
+	walk = func(n *models.FileTreeNode) {
+		if n == nil {
+			return
+		}
+		if n.Kind != "folder" {
+			p := n.Path
+			if p == "" {
+				p = n.Label
+			}
+			if p != "" {
+				files = append(files, p)
+			}
+		}
+		for i := range n.Children {
+			walk(&n.Children[i])
+		}
+	}
+	walk(root)
+	for _, f := range files {
+		if strings.EqualFold(f, rel) {
+			return f, nil
+		}
+	}
+	stem := strings.ToLower(strings.TrimSuffix(rel, filepath.Ext(rel)))
+	var stemHits []string
+	for _, f := range files {
+		if strings.ToLower(strings.TrimSuffix(f, filepath.Ext(f))) == stem {
+			stemHits = append(stemHits, f)
+		}
+	}
+	if len(stemHits) == 1 {
+		return stemHits[0], nil
+	}
+	if len(stemHits) > 1 {
+		return "", stemHits[:min(3, len(stemHits))]
+	}
+	norm := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	// Stems: the extension ("x" vs "x.docx") must not count as distance.
+	nq := norm(strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel)))
+	type scored struct {
+		path string
+		d    int
+	}
+	var ranked []scored
+	for _, f := range files {
+		nf := norm(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
+		if nq == "" || nf == "" {
+			continue
+		}
+		d := levenshtein(nq, nf)
+		// Containment is an exact-enough hit regardless of length gap.
+		if strings.Contains(nf, nq) || strings.Contains(nq, nf) {
+			d = 0
+		}
+		allow := len(nq) / 6
+		if allow < 2 {
+			allow = 2
+		}
+		if ll := len(nf); ll/6 > allow {
+			allow = ll / 6
+		}
+		if d <= allow {
+			ranked = append(ranked, scored{f, d})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].d < ranked[j].d })
+	var fuzzy []string
+	for i := 0; i < len(ranked) && i < 3; i++ {
+		fuzzy = append(fuzzy, ranked[i].path)
+	}
+	if len(fuzzy) > 0 {
+		return "", fuzzy
+	}
+	return "", nil
+}
+
+// levenshtein is rune-wise edit distance for did-you-mean ranking.
+// Inputs are short normalized stems, so the O(n·m) table is trivial.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	if len(ar) == 0 {
+		return len(br)
+	}
+	if len(br) == 0 {
+		return len(ar)
+	}
+	prev := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i, ca := range ar {
+		cur := make([]int, len(br)+1)
+		cur[0] = i + 1
+		for j, cb := range br {
+			cost := 0
+			if ca != cb {
+				cost = 1
+			}
+			del, ins, sub := prev[j+1]+1, cur[j]+1, prev[j]+cost
+			cur[j+1] = del
+			if ins < cur[j+1] {
+				cur[j+1] = ins
+			}
+			if sub < cur[j+1] {
+				cur[j+1] = sub
+			}
+		}
+		prev = cur
+	}
+	return prev[len(br)]
 }
 
 func (h *ToolHost) readSummary() ToolResult {

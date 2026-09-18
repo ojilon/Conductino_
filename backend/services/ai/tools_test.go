@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -126,5 +127,55 @@ func TestProposeSummaryEditOps(t *testing.T) {	h := &ToolHost{}
 	}
 	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "rename", "text": "x"}); r.OK {
 		t.Fatalf("unknown op should fail: %+v", r)
+	}
+}
+
+// suggestFS gates Resolve to listed files, so near-misses exercise the
+// did-you-mean path instead of the permissive fakeFS.
+type suggestFS struct {
+	root  string
+	files []string
+}
+
+func (f *suggestFS) Root() string { return f.root }
+func (f *suggestFS) Resolve(path string) (string, error) {
+	for _, x := range f.files {
+		if x == path {
+			return f.root + "/" + path, nil
+		}
+	}
+	return "", errOutside
+}
+func (f *suggestFS) ListRoot() (*models.FileTreeNode, error) {
+	root := &models.FileTreeNode{ID: ".", Kind: "folder", Label: "ws"}
+	for _, x := range f.files {
+		root.Children = append(root.Children, models.FileTreeNode{
+			ID: x, Kind: "file", Label: filepath.Base(x),
+			Ext: strings.TrimPrefix(filepath.Ext(x), "."), Path: x,
+		})
+	}
+	return root, nil
+}
+
+func TestReadSourceMissingExtension(t *testing.T) {
+	h := &ToolHost{FS: &suggestFS{root: "/tmp/ws", files: []string{"Summary.docx"}}, Docs: fakeDocs{}}
+	r := h.Dispatch(ToolReadSource, map[string]string{"path": "Summary"})
+	if !r.OK || !strings.Contains(r.Content, "Summary.docx") {
+		t.Fatalf("stem resolve: %+v", r)
+	}
+}
+
+func TestReadSourceTypoSuggests(t *testing.T) {
+	h := &ToolHost{FS: &suggestFS{
+		root:  "/tmp/ws",
+		files: []string{"plant_bioenergetics_and_metabolism.docx", "Summary.docx"},
+	}, Docs: fakeDocs{}}
+	r := h.Dispatch(ToolReadSource, map[string]string{"path": "plant_bioeneergetics_and_metabolism"})
+	if r.OK {
+		t.Fatalf("typo should not succeed: %+v", r)
+	}
+	if !strings.Contains(r.Content, "did you mean") ||
+		!strings.Contains(r.Content, "plant_bioenergetics_and_metabolism.docx") {
+		t.Fatalf("no suggestion: %+v", r)
 	}
 }
