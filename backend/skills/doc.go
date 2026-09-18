@@ -7,7 +7,8 @@
 //
 // Discovery layers (08 §1.2): bundled `backend/skills/*.md` (embedded,
 // versioned in git) < workspace `<root>/.conductino/skills/*.md` < user
-// app-data `Conductino/skills/*.md`. No skill content exists yet — this
-// package holds the reservation so 07 (windowed reading) lands first and
-// skills build on stable tool verbs. Do not invent skill files here early.
+// app-data `Conductino/skills/*.md`. Landed: `skills.go` (Parse/LoadDir/
+// Match/Excerpt) + the `summarize-source` starter skill. Prompt wiring
+// (inject ≤2 excerpts at prompt build) lands with the workflow runner;
+// see docs/plans/11-skills-and-workflows.md.
 package skills

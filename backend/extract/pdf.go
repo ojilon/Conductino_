@@ -35,6 +35,10 @@ func openPdfFile(absPath, relKey string) (models.OpenedDocument, error) {
 		err := fmt.Errorf("pdf too large (%d bytes)", info.Size())
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonTooLarge, Detail: err.Error(), Err: err}
 	}
+	if info.Size() == 0 {
+		// Fresh empty file — blank page, not a parse error.
+		return emptyDocument(absPath, "pdf"), nil
+	}
 	f, r, err := pdf.Open(absPath)
 	if err != nil {
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonParseError, Detail: "not a readable pdf: " + err.Error(), Err: err}

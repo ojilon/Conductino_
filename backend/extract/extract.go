@@ -117,3 +117,25 @@ func (d *Documents) OpenFile(absPath, relKey string) (models.OpenedDocument, err
 func (d *Documents) WriteSummaryDOCX(absRoot, relPath, blocksJSON string) (string, error) {
 	return WriteSummaryDOCXPath(absRoot, relPath, blocksJSON)
 }
+
+// emptyDocument returns a blank openable document for 0-byte files.
+// Brand-new files (e.g. a Summary.docx just created on disk) open as an
+// empty page the user/AI can fill — never a parse_error. The renderer shows
+// one empty block; the summary edit loop treats it as "no content yet".
+func emptyDocument(absPath, kind string) models.OpenedDocument {
+	base := filepath.Base(absPath)
+	wire, err := marshalTextBlocks([]textBlock{
+		{ID: "b-empty", Type: "paragraph", Segments: []textSegment{{Text: ""}}},
+	})
+	if err != nil {
+		// Static shape above cannot fail to marshal; empty string still
+		// decodes to zero blocks, which renderers handle as blank.
+		wire = `{"blocks":[]}`
+	}
+	return models.OpenedDocument{
+		Title:      strings.TrimSuffix(base, filepath.Ext(base)),
+		BlocksJSON: wire,
+		PageCount:  1,
+		Kind:       kind,
+	}
+}

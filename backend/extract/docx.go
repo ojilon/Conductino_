@@ -74,6 +74,10 @@ func openDocxFile(absPath, relKey string) (models.OpenedDocument, error) {
 		err := fmt.Errorf("docx too large (%d bytes)", info.Size())
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonTooLarge, Detail: err.Error(), Err: err}
 	}
+	if info.Size() == 0 {
+		// Fresh empty file (created on disk, no content yet) — blank page.
+		return emptyDocument(absPath, "docx"), nil
+	}
 
 	zr, err := zip.OpenReader(absPath)
 	if err != nil {

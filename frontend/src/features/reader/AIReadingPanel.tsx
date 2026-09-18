@@ -73,7 +73,7 @@ function HistoryList({ documentId }: { documentId?: string }) {
 
 function ChatFace({ doc }: { doc: Document }) {
   const { state, dispatch } = useApp();
-  const { runChat, ensureThread } = useAIRunners();
+  const { runChat, ensureThread, newThread } = useAIRunners();
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const running = runningActivity(state);
@@ -115,8 +115,8 @@ function ChatFace({ doc }: { doc: Document }) {
   };
 
   useEffect(() => {
-    ensureThread(doc.id);
-  }, [doc.id, ensureThread]);
+    ensureThread();
+  }, [ensureThread]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -134,6 +134,11 @@ function ChatFace({ doc }: { doc: Document }) {
     dispatch({ type: "chat.clear", threadId: thread.id });
   };
 
+  const startNewChat = () => {
+    if (runningChat) return;
+    newThread();
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ActivityStrip />
@@ -141,8 +146,8 @@ function ChatFace({ doc }: { doc: Document }) {
         {!thread || thread.messages.length === 0 ? (
           <EmptyState
             icon="sparkles"
-            title="Chat about this document"
-            hint="Ask follow-ups, request clarifications, or brainstorm claims. Context from the open document is attached automatically. Type @ to target a document; select text to anchor a region."
+            title="Workspace chat"
+            hint="One conversation per folder — it follows you across files. Context from the open document is attached automatically. Type @ to target a document; select text to anchor a region."
           />
         ) : (
           thread.messages.map((m) => (
@@ -212,15 +217,24 @@ function ChatFace({ doc }: { doc: Document }) {
         </div>
         <div className="mt-1.5 flex items-center justify-between">
           <p className="text-[10.5px] text-mute">Enter to send · Shift+Enter newline</p>
-          {thread && thread.messages.length > 0 && (
+          <div className="flex items-center gap-3">
             <button
               type="button"
               className="text-[10.5px] text-mute hover:text-ink-700"
-              onClick={clear}
+              onClick={startNewChat}
             >
-              Clear thread
+              New chat
             </button>
-          )}
+            {thread && thread.messages.length > 0 && (
+              <button
+                type="button"
+                className="text-[10.5px] text-mute hover:text-ink-700"
+                onClick={clear}
+              >
+                Clear thread
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

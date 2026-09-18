@@ -59,6 +59,10 @@ func openTextFile(absPath, relKey string) (models.OpenedDocument, error) {
 		err := fmt.Errorf("text file too large (%d bytes)", info.Size())
 		return models.OpenedDocument{}, &OpenError{Reason: models.ReasonTooLarge, Detail: err.Error(), Err: err}
 	}
+	if info.Size() == 0 {
+		// Fresh empty file — blank page, not a parse error.
+		return emptyDocument(absPath, "text"), nil
+	}
 	f, err := os.Open(absPath)
 	if err != nil {
 		reason, _ := ReasonOf(err)

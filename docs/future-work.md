@@ -7,8 +7,9 @@
 | App shell, mode switch, top bar | **WORKING** | `src/App.tsx` |
 | Browser UI (sessions, tabs, address bar, navigation, mock pages, search page, new tab) | **WORKING** (navigation real, page content mock) | `src/features/browser/` |
 | Reader UI (subtabs, document info, TOC, file tree, AI panels, resize/collapse) | **WORKING** (tree moved to Library view; Documents panel slimmed) | `src/features/reader/` |
-| Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / MOCK tree in browser** | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
+| Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / null in browser** (focus-refresh keeps it live; open focuses existing tab) | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
 | `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/extract/extract.go:OpenFile` |
+| Empty/new files (0-byte any supported type) | **WORKING — open as blank pages, never errors** | `backend/extract` `emptyDocument`, `empty_test.go` |
 | Open-failure reporting | **WORKING — typed reasons, honest toasts, no mock fallback** | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
 | Stale tabs on folder switch | **BUG, not started** (see `tasks.md` §1.1) | `Filesystem.root`, `metadata.path` |
 | Chosen-folder persistence across restarts | **MISSING** (memory only) | `backend/services/workspace.go:Save` |
@@ -23,6 +24,7 @@
 | Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based; gated autosave to DOCX) | `SummaryDocumentView.tsx` |
 | AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING** (tool + chat driven; user gatekeeps every change) | `change.*` actions |
 | Chat `@doc` targeting + region selection | **WORKING** (`mentionIds` + selection anchor; autocomplete in composer) | `state/mentions.ts`, `aiController.runChat` |
+| Unified workspace chat (one thread per folder + New chat) | **WORKING** (thread identity = workspaceId; history load + switcher pending) | `aiController.ensureThread/newThread`, `AIReadingPanel.tsx`, `docs/plans/09-unified-workspace-chat.md` |
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
@@ -32,7 +34,7 @@
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
 | Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx`, `slateAdapter.ts` |
-| Skills / workflows / parallel APIs | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§1–3 |
+| Skills / workflows / parallel APIs | **PARTIAL** (loader + `summarize-source` starter landed; prompt wiring + runner planned) | `backend/skills/`, `docs/plans/11-skills-workflows-and-split.md` (was `08` §§1–3) |
 | Chat observability (tokens, model names, tool trace, logs DB) | **PROPOSAL** (usage + audit rings exist in memory; persistence + UI pending) | `docs/plans/08-operations-growth.md` §§4–5 |
 | CI + releases (tags, installer drive choice, portable zip) | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§6–7 |
 | Bookmarking pages, collections, workspace library content | **FUTURE** (UI placeholders exist) | sidebar views |

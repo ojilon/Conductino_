@@ -110,3 +110,28 @@ Each phase should leave the app shippable (no broken reader).
 - [ ] Logs DB (`ai_log`, `tool_audit`, `guidance_notes`) + retention + Settings viewer/export + self-guidance loop
 - [ ] CI (vet/test/tsc/build) + vitest for pure TS + learning-tests convention
 - [ ] Releases: tags + CHANGELOG + NSIS directory page (install-drive choice) + portable zip + smoke checklist
+
+## Phase 16 — Unified chat + live library + empty docs (09 + 10 §1; landed)
+
+- [x] One chat per workspace (`ensureThread` matches workspace only) + New chat button
+- [x] Empty files open as blank pages (`extract.emptyDocument`, tested)
+- [x] Library refresh on window focus + open focuses existing tab (path+root match)
+- [x] Skills loader + `summarize-source` starter (`backend/skills/`)
+- [ ] Thread history load from SQLite on workspace switch
+- [ ] Minimal thread switcher (title + updatedAt)
+
+## Phase 17 — Intermediates + canvas + edit loop (10 §§2–3 + 11 §3)
+
+- [ ] `backend/.work/` temp mirrors + mirror-aware read_summary/propose + accept path
+- [ ] Page canvas renderer for docx/md/txt (pdf stays pdf.js); empty doc = one empty page
+- [ ] Revise-with-context loop + optional accept notification to the thread
+
+## Phase 18 — Skills wiring + workflow runner (11 §§1–2)
+
+- [ ] Prompt wiring (≤2 skill excerpts at prompt build) + starters (revise-proposal, find-in-workspace, quota-aware) + workspace/user layers
+- [ ] `backend/workflows/` runner (gated routines, checkpoints, idempotent steps)
+
+## Phase 19 — Frontend simplification + backend async APIs (11 §§4–5)
+
+- [ ] Move context-pack assembly, skill matching, history load behind `App.*` APIs
+- [ ] Keep non-network packages stdlib-only (allowlist: sqlite, ledongthuc/pdf); dep check in CI spirit

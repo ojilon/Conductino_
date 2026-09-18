@@ -5,4 +5,6 @@ frontend/dist
 # (or the GEMINI_API_KEY env var); see backend/.ai.env for the template.
 backend/.ai.env
 *.env
+# Summary .md scratch mirrors (plan 10 §2) — debuggable, wipable, never committed.
+backend/.work/
 

@@ -332,13 +332,17 @@ export function useAIRunners() {
 
   /* ---------- Phase 4/5: multi-turn chat (+ tools) ---------- */
 
-  /** Ensure a workspace-scoped thread exists and is active; returns its id. */
+  /** Ensure the workspace chat exists and is active; returns its id. */
   const ensureThread = useCallback(
     (documentId?: string): string => {
       const ws = activeWorkspace(state);
       const wsId = ws?.id ?? "ws-demo";
+      // ONE chat per workspace (plan 09): match workspace only. The open
+      // document rides on runChat opts as the region anchor — never as
+      // thread identity — so the conversation survives file switches.
+      // documentId is kept on creation as provenance ("started from").
       const existing = Object.values(state.chat.byId).find(
-        (t) => t.workspaceId === wsId && (documentId ? t.documentId === documentId : true),
+        (t) => t.workspaceId === wsId,
       );
       if (existing) {
         if (state.chat.activeId !== existing.id) {
@@ -361,6 +365,24 @@ export function useAIRunners() {
     },
     [state, dispatch],
   );
+
+  /** Start a fresh workspace chat (explicit "New chat" button). History stays in byId. */
+  const newThread = useCallback((): string => {
+    const ws = activeWorkspace(state);
+    const wsId = ws?.id ?? "ws-demo";
+    const now = Date.now();
+    const thread: ChatThread = {
+      id: uid("thr"),
+      workspaceId: wsId,
+      title: "Research chat",
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    dispatch({ type: "chat.ensure", thread });
+    dispatch({ type: "chat.setActive", id: thread.id });
+    return thread.id;
+  }, [state, dispatch]);
 
   const runChat = useCallback(
     (text: string, opts?: { documentId?: string; includeContext?: boolean; selection?: SelectionRef; changeId?: string }) => {
@@ -588,5 +610,5 @@ export function useAIRunners() {
     [state, start, finish, dispatch, ensureThread],
   );
 
-  return { runBrowse, runExplain, runIncludeInSummary, runRevise, runRelatedSources, runChat, ensureThread };
+  return { runBrowse, runExplain, runIncludeInSummary, runRevise, runRelatedSources, runChat, ensureThread, newThread };
 }
