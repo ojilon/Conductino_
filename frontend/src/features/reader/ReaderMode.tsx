@@ -119,15 +119,20 @@ export default function ReaderMode() {
         dispatch({ type: "reader.tab.select", tabId: existingTab });
         return;
       }
-      const title = state.documents[node.documentId]?.metadata.title ?? node.label;
-      const short: Record<string, string> = { "doc-c": "Paper C" };
-      dispatch({
-        type: "reader.doc.open",
-        tabId: uid("rt"),
-        documentId: node.documentId,
-        label: short[node.documentId] ?? (title.length > 18 ? `${title.split(" ")[0]} ${title.split(" ")[1] ?? ""}` : title),
-      });
-      return;
+      // The linked document may be gone (stale tree entry): never open a
+      // ghost tab — fall through to the real extraction pipe below, which
+      // either opens the file's content or reports an honest error.
+      const linked = state.documents[node.documentId];
+      if (linked) {
+        const title = linked.metadata.title;
+        dispatch({
+          type: "reader.doc.open",
+          tabId: uid("rt"),
+          documentId: node.documentId,
+          label: title.length > 18 ? `${title.split(" ")[0]} ${title.split(" ")[1] ?? ""}` : title,
+        });
+        return;
+      }
     }
     const ext = (node.ext ?? "pdf").toLowerCase();
     let opened: OpenedFile | null;
