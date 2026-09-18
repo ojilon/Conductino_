@@ -100,3 +100,12 @@ Each phase should leave the app shippable (no broken reader).
 - [ ] 06 steps 4–6: split `models/`, bridge regroup, drop aliases
 - [ ] 07 steps 1–3: `extract_cache` md/page-map columns, normalize, window fn
 - [ ] 07 steps 4–6: `read_source` pages/offset/limit + envelope, `App.ReadSourcePage`, `path:page` search hits
+
+## Phase 15 — Operations & growth (planned: 08)
+- [ ] SKILL.md format + discovery (bundled/workspace/user) + starter set; prompt injection caps
+- [ ] Workflows runner (gated routines reusing tool budget/audit)
+- [ ] Parallel APIs (bounded fan-out, idempotent steps, thread/step usage attribution)
+- [ ] Chat UI: per-turn tokens, `via provider/model`, tool-call trace, retry/switch action
+- [ ] Logs DB (`ai_log`, `tool_audit`, `guidance_notes`) + retention + Settings viewer/export + self-guidance loop
+- [ ] CI (vet/test/tsc/build) + vitest for pure TS + learning-tests convention
+- [ ] Releases: tags + CHANGELOG + NSIS directory page (install-drive choice) + portable zip + smoke checklist

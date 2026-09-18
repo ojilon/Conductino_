@@ -32,6 +32,9 @@
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
 | Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx`, `slateAdapter.ts` |
+| Skills / workflows / parallel APIs | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§1–3 |
+| Chat observability (tokens, model names, tool trace, logs DB) | **PROPOSAL** (usage + audit rings exist in memory; persistence + UI pending) | `docs/plans/08-operations-growth.md` §§4–5 |
+| CI + releases (tags, installer drive choice, portable zip) | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§6–7 |
 | Bookmarking pages, collections, workspace library content | **FUTURE** (UI placeholders exist) | sidebar views |
 
 ## Suggested order of real integration
