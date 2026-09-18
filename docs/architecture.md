@@ -10,8 +10,8 @@ Stack: **Wails (Go) · React 19 · TypeScript · Vite · Tailwind CSS 4 · SQLit
 | 1. UI | `src/features/**`, `src/components/**` | Rendering + user intent. No business logic, no service calls except the two sanctioned boundaries below. |
 | 2. Application state | `src/state/appState.tsx` | Single reducer + context. ALL state mutation flows through dispatched actions. |
 | 3. Domain/workspace state | `src/types/domain.ts` | Pure types: sessions, tabs, sources, documents, changes, activities. |
-| 4. Backend services | `frontend/src/services/backend.ts` (TS interfaces + mock + Wails impls) / `backend/services/*.go` | Filesystem walk/reveal/resolve, Workspace-owned library tree, `.txt` extraction, storage (mock), source extraction (mock). React never touches the OS — and never builds paths (it passes `FileTreeNode.path` tokens back opaquely). |
-| 5. AI operations | `src/services/ai.ts` (provider boundary) / `backend/services/ai.go` | All model access. The app speaks `AIProvider`, never a vendor SDK. |
+| 4. Backend services | `frontend/src/services/backend.ts` (TS interfaces + mock + Wails impls) / `backend/{extract,tools,services}/*.go` | Filesystem walk/reveal/resolve, Workspace-owned library tree, extraction dispatch, storage (SQLite), source tools (mock). React never touches the OS — and never builds paths (it passes `FileTreeNode.path` tokens back opaquely). |
+| 5. AI operations | `src/services/ai.ts` (provider boundary) / `backend/ai/` | All model access. The app speaks `AIProvider`, never a vendor SDK. |
 | 6. Document rendering | `src/features/reader/DocumentView.tsx`, `SummaryDocumentView.tsx`, `src/features/browser/MockWebPage.tsx` | DocumentModel → pixels. Swappable per format. |
 | 7. Persistence | `backend/services/storage.go` (in-memory today, SQLite tomorrow) | Sessions, sources, documents, changes, activities, bookmarks. |
 
@@ -52,9 +52,7 @@ Domain state lives in `AppState` and mutates only via dispatched actions — wit
 │       │   └── aiController.ts         Run AI operations, stream into state
 │       ├── services/
 │       │   ├── ai.ts                    WailsAIProvider (Go/Gemini via StreamAIRequest)
-│       │   └── backend.ts               Service interfaces + mocks + Wails impls
-│       ├── mock/
-│       │   └── data.ts                  Sessions, documents, sources, changes, file tree
+│       │   └── backend.ts               Service interfaces + browser-mode nulls + Wails impls
 │       ├── components/                  icons.tsx, ui.tsx (Button/Menu/Modal/ResizablePanel/…)
 │       └── features/
 │           ├── browser/                 BrowserMode, WorkspaceSidebar, BrowserChrome,
@@ -65,11 +63,22 @@ Domain state lives in `AppState` and mutates only via dispatched actions — wit
 │                                        AIReadingPanel
 ├── backend/                             Pure Go (zero Wails imports)
 │   ├── main.go                          Bridge only: Backend aggregates one service each
-│   ├── models/models.go                 Go mirror of the TS domain types (+ OpenedDocument)
+│   ├── models/                          document.go (library/open) / ai.go (wire) /
+│   │                                     storage.go (records) — mirrors TS domain.ts
+│   ├── extract/                         Pure extraction, no network: extract (dispatch +
+│   │                                     typed errors) / text / docx / pdf / ids (stable
+│   │                                     block IDs) / normalize + page (plan 07 stubs)
+│   ├── tools/                           Folder-scoped harness tools, no model calls:
+│   │                                     tools (registry/dispatch/audit) / paths (Resolve
+│   │                                     jail + did-you-mean) / search (keyword + caps)
+│   ├── usage/                           Telemetry only: usage (meters/RPM) / policy
+│   │                                     (cost classes, semaphore, explain cache)
+│   ├── ai/                              Network ONLY: service (Run/failover) / backends
+│   │                                     (gemini, openai_compat) / prompts / chat (tool loop)
 │   └── services/                        filesystem (walk/reveal/resolve) / workspace (owns
-│                                        library tree, composes Filesystem) / documents
-│                                        (.txt/.md real, rest ErrUnsupportedType) /
-│                                        storage (in-memory) / ai (mock)
+│                                        library tree, composes Filesystem) /
+│                                        storage (interface + SQLite + memory) /
+│                                        ai_shim + extract_alias (one-release aliases)
 ├── docs/                                This documentation
 └── tasks.md                             Authoritative bugs/design/extraction plan (read first)
 ```
@@ -89,7 +98,7 @@ Domain state lives in `AppState` and mutates only via dispatched actions — wit
 2. `wails dev` from the repo root — serves the real UI in the desktop shell.
 3. Checks: `go vet ./...` + `go build ./...` (root); `tsc --noEmit` (via `node node_modules/typescript/bin/tsc` in `frontend/`).
 
-`npm run dev` (inside `frontend/`) runs the full application with mock services — no folder dialog, mock tree, mock extraction. The two modes are deliberately NOT equivalent; see `tasks.md` §1.2 for a mock-fallback bug this split created.
+`npm run dev` (inside `frontend/`) runs the full application with null-services — no folder dialog, no library tree, no extraction. The two modes are deliberately NOT equivalent; failures surface as honest toasts, never fabricated documents.
 
 ## Browser integration boundary
 

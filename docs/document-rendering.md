@@ -36,7 +36,7 @@ navigation, tabs — works on the model and survives a renderer swap.
   → `Documents.OpenFile` extension dispatch → `openTextFile` (Stat-gated,
   `LimitReader`-bounded) / stdlib OOXML → `encoding/json`-marshalled blocks
   with **stable content-addressed IDs** → new tab with genuine paragraphs
-  (`backend/services/documents.go`, `blockids.go`). Everything else
+  (`backend/extract/extract.go`, `ids.go`). Everything else
   returns `ErrUnsupportedType` with a typed `reason` value (no mock fallback).
   `DocumentService.Extract` (abstract-wrapped stub) is superseded by
   `OpenFile` and has zero callers.
@@ -45,7 +45,7 @@ navigation, tabs — works on the model and survives a renderer swap.
 
 | Format | Suggested library | Where |
 |---|---|---|
-| **PDF** | Extraction: `ledongthuc/pdf` LANDED (pure Go, per-page text rows → paragraph recovery by vertical gap, `page`-break blocks, stable IDs). Canvas: `pdfjs-dist` LANDED (`PdfView`, lazy raster + text layer, worker via `public/pdf.worker.min.mjs`). Limits: text-layer PDFs only; tables/images/layout dropped | `backend/services/pdf.go`; `frontend/src/features/reader/PdfView.tsx` |
+| **PDF** | Extraction: `ledongthuc/pdf` LANDED (pure Go, per-page text rows → paragraph recovery by vertical gap, `page`-break blocks, stable IDs). Canvas: `pdfjs-dist` LANDED (`PdfView`, lazy raster + text layer, worker via `public/pdf.worker.min.mjs`). Limits: text-layer PDFs only; tables/images/layout dropped | `backend/extract/pdf.go`; `frontend/src/features/reader/PdfView.tsx` |
 | **DOCX** | `unidoc/unioffice` in Go → blocks (check license before adopting; same library later covers DOCX save-out) — stdlib `archive/zip`+`encoding/xml` text-only arm as stopgap; full evaluation in `tasks.md` §4 | Same slot: new `OpenFile` arm. |
 | **HTML / web** | Real browser engine for web sources (see architecture.md §Browser); `golang.org/x/net/html` for saved HTML files | `MockWebPage` slot in the browser; new `OpenFile` arm for saved files. |
 | **Plain text** | REAL today (`openTextFile`: blank-line paragraphs, caps) | no work needed. |

@@ -16,7 +16,6 @@
  */
 
 import type { FileTreeNode } from "../types/domain";
-import { fileTreeMock } from "../mock/data";
 
 /**
  * Wails-bound Go shell (frontend/app.go, generated at runtime — NOT a build
@@ -135,7 +134,9 @@ const MockFilesystem: FilesystemService = {
 const MockLibrary: LibraryService = {
   async list() {
     await delay(120);
-    return fileTreeMock;
+    // No mock tree: browser mode has no folder. Null is the honest
+    // "no folder yet" signal — the Library panel shows Choose folder.
+    return null;
   },
 };
 

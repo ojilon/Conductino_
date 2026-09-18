@@ -46,8 +46,8 @@ function FileTree({
 }) {
   // Open/active state is keyed by TOKEN (n.path ?? label-built prefix), not
   // by id: tokens are the stable cross-world identity (real trees use them
-  // as ids anyway; mock fallback tokens are built the same way here as in
-  // flatFiles, so ancestors always line up).
+  // as ids anyway; label-built tokens match flatFiles, so ancestors always
+  // line up).
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [activeToken, setActiveToken] = useState<string>("");
 

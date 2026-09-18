@@ -32,7 +32,7 @@ export function runningActivity(state: AppState): AIActivity | undefined {
   return state.aiActivities.find((a) => a.status === "running");
 }
 
-/** Seeded mock workspace id (createInitialState). */
+/** Demo workspace id (createInitialState in appState.tsx). */
 export const DEMO_WORKSPACE_ID = "ws-demo";
 
 export function activeWorkspace(state: AppState): WorkspaceSession | undefined {

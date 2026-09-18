@@ -1,7 +1,13 @@
 # Backend resplit — from services/ flat to specialized packages
 
-> Status: **plan** (06) — code still lives in `backend/services/` + `backend/services/ai/`.
-> Execute in step order; each step leaves `go vet ./...` + `go test` green.
+> Status: **partially landed** — steps 1–4 done: `backend/extract/`
+> (`extract/text/docx/pdf/ids` + `normalize`/`page` stubs for 07),
+> `backend/tools/` (`tools/paths/search`), `backend/usage/` (`usage/policy`),
+> `models/` split (`document/ai/storage`), `ai/` top-level (network-only).
+> One-release aliases: `services/extract_alias.go`, `ai/tools_alias.go`.
+> Remaining: step 5 (bridge regroup + `ReadSourcePage` with 07), step 6
+> (delete aliases). `go build ./...` + `go vet` + `go test ./backend/...` green.
+> Execute remaining steps in order; each leaves the tree green.
 > Companion: `07-source-reading.md` (paged reads + intermediates) builds on step 1.
 
 ## 1. Why the flat layout has to go
@@ -137,8 +143,8 @@ eventually outgrow pure Go on the low-spec target. Prepare without paying:
 
 ## 7. Done criteria
 
-* `backend/extract`, `backend/tools`, `backend/usage` exist with package
-  doc comments; `backend/services/ai/` is gone (contents moved, network-only).
+* [x] `backend/extract`, `backend/tools`, `backend/usage` exist with package
+  doc comments; `services/ai/` is gone (contents moved to network-only `backend/ai/`).
 * Import graph check passes: `go list -deps` on `extract|tools|usage`
   shows no `net/http`, no Wails packages.
 * All existing tests pass unmodified in behavior (moved, not rewritten).

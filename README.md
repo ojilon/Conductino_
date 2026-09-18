@@ -54,17 +54,25 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
   `Backend` aggregates one service instance and forwards to exactly one
   service per method.
 - `backend/services/` — `filesystem.go` (walk/reveal/resolve), `workspace.go`
-  (owns the library tree, composes `Filesystem`), `documents.go` + `docx.go` +
-  `pdf.go` (extraction dispatch; `.txt`/`.md`/`.docx`/`.pdf` real, rest typed
-  `ErrUnsupportedType`), `blockids.go` (stable content-addressed block IDs),
-  `storage.go` + `sqlite_storage.go` (SQLite default, in-memory fallback;
-  includes the `extract_cache` table). `backend/models/` mirrors the TS domain types.
-- `backend/services/ai/` — real provider package: `service.go` (failover
+  (owns the library tree, composes `Filesystem`), `storage.go` +
+  `sqlite_storage.go` (SQLite default, in-memory fallback; includes the
+  `extract_cache` table), `ai_shim.go` + `extract_alias.go` (one-release
+  aliases, see plan 06). `backend/models/` mirrors the TS domain types
+  (`document.go` / `ai.go` / `storage.go` records).
+- `backend/extract/` — pure-Go extraction, no network: `extract.go`
+  (dispatch + typed errors), `text.go`, `docx.go`, `pdf.go`, `ids.go`
+  (stable content-addressed block IDs), `normalize.go` + `page.go`
+  (plan 07 windowed-reading stubs).
+- `backend/tools/` — folder-scoped tools: `tools.go` (registry, dispatch,
+  catalog, audit), `paths.go` (Resolve jail + did-you-mean), `search.go`
+  (keyword search + caps). No model calls, no shell.
+- `backend/usage/` — telemetry only: `usage.go` (meters, RPM rings),
+  `policy.go` (cost classes, semaphore, explain cache).
+- `backend/ai/` — network-only provider package: `service.go` (failover
   orchestration), `backend.go` + `openai_compat.go` (Gemini/Groq/OpenRouter),
-  `policy.go` (cost classes, semaphore, explain cache), `usage.go` (meters),
-  `tools.go` (folder-scoped tools: list/read/search/propose + audit),
-  `chat.go` (multi-turn tool loop), `prompts.go`. Keys live in Go only
-  (env or git-ignored `backend/.ai.env`), never cross into JS.
+  `chat.go` (multi-turn tool loop over `tools.ToolHost`), `prompts.go`.
+  Keys live in Go only (env or git-ignored `backend/.ai.env`), never cross
+  into JS.
 - `frontend/src/services/backend.ts` — service boundary: `Wails*`
   implementations when `window.go` exists, mocks otherwise. Library,
   filesystem, storage (SQLite), and AI are live in the desktop build;
@@ -98,7 +106,7 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
 | How is the app structured? Layers? Wails ↔ React ↔ Go? | `docs/architecture.md` |
 | Where does document state live? What is persisted? | `docs/state-model.md` |
 | **Where do I plug in the real AI API?** | `docs/ai-integration.md` (+ `docs/plans/05-multi-provider-apis.md` for Groq/OpenRouter/failover) |
-| **Where do I plug in the PDF renderer / DOCX parsing?** | Landed: `PdfView.tsx` (pdf.js canvas) + `backend/services/pdf.go`, `docx.go`; see `docs/document-rendering.md` + `tasks.md` §4 |
+| **Where do I plug in the PDF renderer / DOCX parsing?** | Landed: `PdfView.tsx` (pdf.js canvas) + `backend/extract/pdf.go`, `docx.go`; see `docs/document-rendering.md` + `tasks.md` §4 |
 | **Where does SQLite belong?** | Landed default: `backend/services/sqlite_storage.go` (+ `extract_cache`); `docs/architecture.md` |
 | What is implemented vs mocked vs placeholder? | `docs/future-work.md` status table (known bugs live in `tasks.md` §1) |
 | What is the delivery order / what lands next? | `docs/plans/04-implementation-phases.md` (Phases 0–13 done; 14–15 planned) |

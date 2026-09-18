@@ -96,8 +96,9 @@ Each phase should leave the app shippable (no broken reader).
 - [x] No-tools retry for endpoints without function calling; "tool choice" advances the model fallback chain
 
 ## Phase 14 — Backend resplit + paged source reading (planned: 06 + 07)
-- [ ] 06 steps 1–3: carve `extract/` → `tools/` → `usage/` (aliases, then delete)
-- [ ] 06 steps 4–6: split `models/`, bridge regroup, drop aliases
+- [x] 06 steps 1–3: carve `extract/` (extract/text/docx/pdf/ids + normalize/page stubs) → `tools/` (tools/paths/search) → `usage/` (usage/policy); one-release aliases; `ai/` top-level, network-only
+- [x] 06 step 4: split `models/` (document/ai/storage; records owned by models, aliased in services)
+- [ ] 06 steps 5–6: bridge regroup + drop aliases
 - [ ] 07 steps 1–3: `extract_cache` md/page-map columns, normalize, window fn
 - [ ] 07 steps 4–6: `read_source` pages/offset/limit + envelope, `App.ReadSourcePage`, `path:page` search hits
 

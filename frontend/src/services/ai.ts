@@ -6,7 +6,7 @@
  * `getAIProvider()`.
  *
  * The single implementation is `WailsAIProvider`: a thin wrapper over the
- * Go backend (`backend/services/ai.go`, a Gemini-backed AIService). A call
+ * Go backend (`backend/ai/`, a Gemini-backed AIService). A call
  * goes TS → bound `App.StreamAIRequest` → Go runs the model → progress and
  * results come back as `AIEvent`s on the shared "ai://event" channel, which
  * this file demultiplexes back to the originating caller by `requestId`.

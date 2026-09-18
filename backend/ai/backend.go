@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"Conductino/backend/usage"
 )
 
 // ModelBackend is one LLM HTTP endpoint. Gemini uses native REST; Groq and
@@ -61,21 +63,9 @@ func loadEnvKey(name string) string {
 }
 
 // isRateLimitOrUnavailable classifies errors that should trigger failover.
-// Intentionally broad: free-tier exhaustion often returns varied wording.
+// Canonical implementation lives in backend/usage (telemetry owns the error
+// taxonomy so parallel providers share it); kept here as a thin alias
+// during the migration.
 func isRateLimitOrUnavailable(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	for _, needle := range []string{
-		"429", "rate limit", "rate-limit", "quota", "resource exhausted",
-		"resource_exhausted", "503", "unavailable", "overloaded", "capacity",
-		"too many requests", "limit exceeded", "exceeded your current",
-		"billing", "permission denied", "api key not valid",
-	} {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
+	return usage.IsRateLimitOrUnavailable(err)
 }

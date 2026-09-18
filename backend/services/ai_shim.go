@@ -1,7 +1,7 @@
 package services
 
 import (
-	"Conductino/backend/services/ai"
+	"Conductino/backend/ai"
 )
 
 // AIEventSink receives one streaming unit of an AI operation.

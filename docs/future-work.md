@@ -8,15 +8,15 @@
 | Browser UI (sessions, tabs, address bar, navigation, mock pages, search page, new tab) | **WORKING** (navigation real, page content mock) | `src/features/browser/` |
 | Reader UI (subtabs, document info, TOC, file tree, AI panels, resize/collapse) | **WORKING** (tree moved to Library view; Documents panel slimmed) | `src/features/reader/` |
 | Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / MOCK tree in browser** | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
-| `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/services/documents.go:OpenFile` |
-| Open-failure reporting | **MISSING — all failures collapse to mock fallback** (see `tasks.md` §1.2) | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
+| `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/extract/extract.go:OpenFile` |
+| Open-failure reporting | **WORKING — typed reasons, honest toasts, no mock fallback** | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
 | Stale tabs on folder switch | **BUG, not started** (see `tasks.md` §1.1) | `Filesystem.root`, `metadata.path` |
 | Chosen-folder persistence across restarts | **MISSING** (memory only) | `backend/services/workspace.go:Save` |
 | Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
-| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/services/ai/` |
-| AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/services/ai.go` |
+| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/ai/` |
+| AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/ai/service.go` |
 | AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
 | Selection → AI action workflow | **WORKING** (block anchor + range offsets) | `DocumentView.tsx` |
 | Highlights / saved notes | **WORKING** (block-anchored; range-precise spans where measured) | `doc.highlight.add` |
@@ -26,8 +26,8 @@
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
-| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/services/pdf.go`, `documents.go` |
-| Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + `.txt` extraction real; storage + AI mock** | `backend/services/` |
+| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/extract/pdf.go`, `extract.go` |
+| Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + extraction real; AI + storage live, sources/workspace metadata mocked** | `backend/{extract,tools,usage,ai,services}/` |
 | Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
@@ -53,7 +53,8 @@
 
 ## Replacing mock data
 
-`src/mock/data.ts` is the seed for the in-memory state. Once storage exists,
-`createInitialState()` becomes "defaults + load from backend" — the loader
-calls `backend.*` (already promise-based) and dispatches the same actions.
-Keep the file as fixtures for tests until the real corpus replaces it.
+`src/mock/` is deleted: there is no seed corpus. `createInitialState()` in
+`state/appState.tsx` returns empty chrome (one blank browser tab, empty
+reader). Once storage exists it becomes "defaults + load from backend" —
+the loader calls `backend.*` (already promise-based) and dispatches the
+same actions.

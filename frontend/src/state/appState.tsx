@@ -17,7 +17,6 @@ import {
   type ReactNode,
 } from "react";
 import type { AppState } from "../types/domain";
-import { createInitialState as mockInitialState } from "../mock/data";
 import type { Action } from "./actions";
 import { reducePart1a } from "./reducePart1a";
 import { reducePart1b } from "./reducePart1b";
@@ -31,11 +30,17 @@ export type { Action } from "./actions";
 
 const DEMO = "ws-demo";
 
-/** Ensure mock seed has workspace + tags (Phase 2) until data.ts is fully retagged. */
+/**
+ * Empty initial state: one blank browser tab (browser chrome needs a valid
+ * session), reader fully empty, no documents/sources/changes/AI history.
+ * Sections show their empty states until the user picks a library folder
+ * and opens a real file (desktop) or sends a source to the Reader.
+ */
 function createInitialState(): AppState {
-  const s = mockInitialState() as AppState;
-  if (!s.workspace?.byId) {
-    s.workspace = {
+  return {
+    mode: "reader",
+    chat: { activeId: null, byId: {} },
+    workspace: {
       activeId: DEMO,
       byId: {
         [DEMO]: {
@@ -45,22 +50,48 @@ function createInitialState(): AppState {
           label: "Demo research workspace",
         },
       },
-    };
-  }
-  if (!s.chat?.byId) {
-    s.chat = { activeId: null, byId: {} };
-  }
-  const wsId = s.workspace.activeId ?? DEMO;
-  for (const src of Object.values(s.sources)) {
-    if (!src.workspaceId) src.workspaceId = wsId;
-  }
-  for (const doc of Object.values(s.documents)) {
-    if (!doc.workspaceId) doc.workspaceId = wsId;
-  }
-  for (const ch of Object.values(s.changes)) {
-    if (!ch.workspaceId) ch.workspaceId = wsId;
-  }
-  return s;
+    },
+    browser: {
+      sessions: [{ id: "sess-1", title: "Session 1", tabIds: ["t-new"], activeTabId: "t-new" }],
+      activeSessionId: "sess-1",
+      tabs: {
+        "t-new": {
+          id: "t-new",
+          title: "New tab",
+          nav: { currentUrl: "lumen://newtab", history: ["lumen://newtab"], index: 0 },
+        },
+      },
+      ui: { sidebarOpen: true, aiPanelOpen: true, aiPanelWidth: 360 },
+    },
+    reader: {
+      session: { id: "rs-1", tabIds: [], activeTabId: null },
+      tabs: {},
+      ui: {
+        railOpen: true,
+        sidebarOpen: true,
+        railView: "library",
+        aiPanelOpen: true,
+        aiPanelWidth: 330,
+        aiPanelTab: "chat",
+        companion: null,
+        summaryPick: null,
+      },
+    },
+    sources: {},
+    documents: {},
+    changes: {},
+    aiActivities: [],
+    browse: {
+      status: "idle",
+      query: "",
+      phase: 0,
+      sourceIds: [],
+    },
+    selection: null,
+    toast: null,
+    settingsOpen: false,
+    previewSourceId: null,
+  };
 }
 
 function reducer(state: AppState, action: Action): AppState {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"Conductino/backend/models"
 )
 
 // StorageService is the persistence boundary for workspace meta, documents,
@@ -48,81 +50,23 @@ type StorageService interface {
 	PutCachedExtract(e CachedExtract) error
 }
 
-// CachedExtract is one extraction result for a workspace file. Path is the
-// root-anchored key (root + rel token), so the same relative file under a
-// different folder never collides.
-type CachedExtract struct {
-	Path       string `json:"path"`
-	Mtime      int64  `json:"mtime"`
-	Size       int64  `json:"size"`
-	Kind       string `json:"kind,omitempty"`
-	Title      string `json:"title,omitempty"`
-	BlocksJSON string `json:"blocksJson,omitempty"`
-	PageCount  int    `json:"pageCount,omitempty"`
-}
+// Persistence record aliases (plan 06 step 4). Canonical definitions live in
+// backend/models/storage.go so every package shares them; these aliases keep
+// storage.go, sqlite_storage.go, workspace.go, backend/main.go, and the Wails
+// shell compiling untouched. New code must import backend/models directly.
 
-type WorkspaceRecord struct {
-	ID               string `json:"id"`
-	RootPath         string `json:"rootPath"`
-	PrimarySummaryID string `json:"primarySummaryId,omitempty"`
-	Label            string `json:"label,omitempty"`
-	// UpdatedAt is Unix epoch milliseconds (INTEGER in SQLite).
-	// Zero means "not set" — UpsertWorkspace fills it with time.Now().UnixMilli().
-	UpdatedAt int64 `json:"updatedAt,omitempty"`
-}
+// CachedExtract is one extraction result for a workspace file.
+type CachedExtract = models.CachedExtract
 
-type DocumentRecord struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspaceId"`
-	Kind        string `json:"kind"` // source | summary
-	// SourceID links a source document back to its Source row ("" for summaries).
-	SourceID string `json:"sourceId,omitempty"`
-	Title    string `json:"title"`
-	// BlocksJSON is the canonical DocumentBlock[] wire payload (JSON string).
-	BlocksJSON string `json:"blocksJson,omitempty"`
-	// MetaJSON carries DocumentMetadata (author/venue/format/path/rootPath, ...).
-	MetaJSON string `json:"metaJson,omitempty"`
-	// UpdatedAt is Unix epoch milliseconds (INTEGER in SQLite).
-	UpdatedAt int64 `json:"updatedAt,omitempty"`
-}
+type WorkspaceRecord = models.WorkspaceRecord
 
-type ChangeRecord struct {
-	ID         string `json:"id"`
-	DocumentID string `json:"documentId"`
-	// WorkspaceID scopes the proposal to its folder (Phase 2 multi-workspace fix).
-	WorkspaceID string `json:"workspaceId,omitempty"`
-	Type        string `json:"type"` // insert | modify | delete
-	BlockID     string `json:"blockId,omitempty"`
-	OldContent  string `json:"oldContent,omitempty"`
-	NewContent  string `json:"newContent,omitempty"`
-	Status      string `json:"status"` // pending | accepted | rejected
-	SourceID   string `json:"sourceId,omitempty"`
-	ActivityID string `json:"activityId,omitempty"`
-	// CreatedAt is Unix epoch milliseconds (INTEGER in SQLite).
-	CreatedAt int64 `json:"createdAt,omitempty"`
-}
+type DocumentRecord = models.DocumentRecord
 
-type ChatThreadRecord struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspaceId"`
-	// DocumentID optionally ties the thread to the open document ("" = workspace-wide).
-	DocumentID string `json:"documentId,omitempty"`
-	Title      string `json:"title,omitempty"`
-	// CreatedAt/UpdatedAt are Unix epoch milliseconds (INTEGER in SQLite).
-	CreatedAt int64 `json:"createdAt,omitempty"`
-	UpdatedAt int64 `json:"updatedAt,omitempty"`
-}
+type ChangeRecord = models.ChangeRecord
 
-type ChatMessageRecord struct {
-	ID       string `json:"id"`
-	ThreadID string `json:"threadId"`
-	Role     string `json:"role"` // user | assistant | system
-	Content  string `json:"content"`
-	// DocumentID records the focused document when the message was sent.
-	DocumentID string `json:"documentId,omitempty"`
-	// CreatedAt is Unix epoch milliseconds (INTEGER in SQLite).
-	CreatedAt int64 `json:"createdAt,omitempty"`
-}
+type ChatThreadRecord = models.ChatThreadRecord
+
+type ChatMessageRecord = models.ChatMessageRecord
 
 /* ------------------------------------------------------------------ */
 /* In-memory implementation                                            */

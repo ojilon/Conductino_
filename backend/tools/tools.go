@@ -1,11 +1,10 @@
-package ai
+package tools
 
 import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +37,7 @@ type PathResolver interface {
 
 // FileOpener extracts displayable content from an absolute path already
 // Resolve-checked by the host. relKey seeds stable block IDs (see
-// services/blockids.go); pass the workspace-relative token.
+// extract/ids.go); pass the workspace-relative token.
 type FileOpener interface {
 	OpenFile(absPath, relKey string) (models.OpenedDocument, error)
 }
@@ -49,13 +48,13 @@ type ToolHost struct {
 	Docs               FileOpener
 	SummaryText        string // snapshot from frontend (Phase 6 → storage)
 	PrimarySummaryID   string
-	lastProposal       proposal // set by propose_summary_edit for final payload
+	lastProposal       Proposal // set by propose_summary_edit for final payload
 }
 
-// proposal is one structured summary edit: full rewrite power, not
+// Proposal is one structured summary edit: full rewrite power, not
 // append-only. insert adds a paragraph; modify rewrites the target span;
 // delete strikes it. The user gatekeeps every one in the UI.
-type proposal struct {
+type Proposal struct {
 	Op          string // insert | modify | delete
 	Target      string // block id or quoted span in the summary (modify/delete)
 	OldText     string // span being replaced/removed (modify/delete fallback)
@@ -72,7 +71,7 @@ type ToolResult struct {
 
 // Tool audit (issue 17): bounded ring of tool invocations for debugging and
 // usage review. Only names + relative paths are logged — never file content,
-// prompts, or proposal text (plan 02 §5).
+// prompts, or Proposal text (plan 02 §5).
 type toolAuditEntry struct {
 	At   int64  // Unix millis
 	Tool string // tool name
@@ -87,7 +86,7 @@ var (
 	toolAudit   []toolAuditEntry
 )
 
-func auditTool(name string, args map[string]string, ok bool) {
+func AuditTool(name string, args map[string]string, ok bool) {
 	arg := ""
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case ToolReadSource, ToolSearchWorkspace:
@@ -112,8 +111,8 @@ func auditTool(name string, args map[string]string, ok bool) {
 	})
 }
 
-// toolAuditSummary counts calls per tool for the usage line ("tools: 4 calls").
-func toolAuditSummary() string {
+// ToolAuditSummary counts calls per tool for the usage line ("tools: 4 calls").
+func ToolAuditSummary() string {
 	toolAuditMu.Lock()
 	defer toolAuditMu.Unlock()
 	if len(toolAudit) == 0 {
@@ -333,141 +332,6 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 	}
 }
 
-// resolveSourcePath maps a model-typed path to the canonical tree path.
-// Returns ("", nil) when the tree is unavailable (caller tries direct) or
-// ("", suggestions) when nothing matches. Matching order: exact
-// case-insensitive → unique stem (extension-insensitive) → normalized
-// fuzzy containment, capped at 3 suggestions.
-func (h *ToolHost) resolveSourcePath(rel string) (string, []string) {
-	if h.FS == nil {
-		return "", nil
-	}
-	root, err := h.FS.ListRoot()
-	if err != nil || root == nil {
-		return "", nil
-	}
-	var files []string
-	var walk func(n *models.FileTreeNode)
-	walk = func(n *models.FileTreeNode) {
-		if n == nil {
-			return
-		}
-		if n.Kind != "folder" {
-			p := n.Path
-			if p == "" {
-				p = n.Label
-			}
-			if p != "" {
-				files = append(files, p)
-			}
-		}
-		for i := range n.Children {
-			walk(&n.Children[i])
-		}
-	}
-	walk(root)
-	for _, f := range files {
-		if strings.EqualFold(f, rel) {
-			return f, nil
-		}
-	}
-	stem := strings.ToLower(strings.TrimSuffix(rel, filepath.Ext(rel)))
-	var stemHits []string
-	for _, f := range files {
-		if strings.ToLower(strings.TrimSuffix(f, filepath.Ext(f))) == stem {
-			stemHits = append(stemHits, f)
-		}
-	}
-	if len(stemHits) == 1 {
-		return stemHits[0], nil
-	}
-	if len(stemHits) > 1 {
-		return "", stemHits[:min(3, len(stemHits))]
-	}
-	norm := func(s string) string {
-		var b strings.Builder
-		for _, r := range strings.ToLower(s) {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-				b.WriteRune(r)
-			}
-		}
-		return b.String()
-	}
-	// Stems: the extension ("x" vs "x.docx") must not count as distance.
-	nq := norm(strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel)))
-	type scored struct {
-		path string
-		d    int
-	}
-	var ranked []scored
-	for _, f := range files {
-		nf := norm(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
-		if nq == "" || nf == "" {
-			continue
-		}
-		d := levenshtein(nq, nf)
-		// Containment is an exact-enough hit regardless of length gap.
-		if strings.Contains(nf, nq) || strings.Contains(nq, nf) {
-			d = 0
-		}
-		allow := len(nq) / 6
-		if allow < 2 {
-			allow = 2
-		}
-		if ll := len(nf); ll/6 > allow {
-			allow = ll / 6
-		}
-		if d <= allow {
-			ranked = append(ranked, scored{f, d})
-		}
-	}
-	sort.Slice(ranked, func(i, j int) bool { return ranked[i].d < ranked[j].d })
-	var fuzzy []string
-	for i := 0; i < len(ranked) && i < 3; i++ {
-		fuzzy = append(fuzzy, ranked[i].path)
-	}
-	if len(fuzzy) > 0 {
-		return "", fuzzy
-	}
-	return "", nil
-}
-
-// levenshtein is rune-wise edit distance for did-you-mean ranking.
-// Inputs are short normalized stems, so the O(n·m) table is trivial.
-func levenshtein(a, b string) int {
-	ar, br := []rune(a), []rune(b)
-	if len(ar) == 0 {
-		return len(br)
-	}
-	if len(br) == 0 {
-		return len(ar)
-	}
-	prev := make([]int, len(br)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i, ca := range ar {
-		cur := make([]int, len(br)+1)
-		cur[0] = i + 1
-		for j, cb := range br {
-			cost := 0
-			if ca != cb {
-				cost = 1
-			}
-			del, ins, sub := prev[j+1]+1, cur[j]+1, prev[j]+cost
-			cur[j+1] = del
-			if ins < cur[j+1] {
-				cur[j+1] = ins
-			}
-			if sub < cur[j+1] {
-				cur[j+1] = sub
-			}
-		}
-		prev = cur
-	}
-	return prev[len(br)]
-}
-
 func (h *ToolHost) readSummary() ToolResult {
 	snap := strings.TrimSpace(h.SummaryText)
 	if snap == "" {
@@ -489,124 +353,6 @@ func (h *ToolHost) readSummary() ToolResult {
 		OK:      true,
 		Content: fmt.Sprintf("Current research summary (%s):\n%s", id, snap),
 	}
-}
-
-// Search caps: bounded work on a low-spec machine, bounded prompt text.
-const (
-	searchMaxFiles   = 60
-	searchMaxMatches = 12
-	searchSnippetRad = 80
-	searchMaxOut     = 4000
-)
-
-// searchWorkspace is keyword search over readable workspace files. Every
-// path goes through Resolve (root jail); only read_source-readable
-// extensions are scanned; results are quoted snippets, never full dumps.
-func (h *ToolHost) searchWorkspace(query string) ToolResult {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "query required"}
-	}
-	if h.FS == nil || h.Docs == nil {
-		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "filesystem not available"}
-	}
-	root, err := h.FS.ListRoot()
-	if err != nil || root == nil {
-		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "could not list workspace"}
-	}
-	var paths []string
-	var walk func(n *models.FileTreeNode)
-	walk = func(n *models.FileTreeNode) {
-		if n == nil || len(paths) >= searchMaxFiles {
-			return
-		}
-		if n.Kind != "folder" {
-			rel := n.Path
-			if rel == "" {
-				rel = n.Label
-			}
-			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(rel), "."))
-			if allowedReadExt[ext] && !filepath.IsAbs(rel) && !strings.Contains(rel, "..") {
-				paths = append(paths, rel)
-			}
-		}
-		for i := range n.Children {
-			walk(&n.Children[i])
-		}
-	}
-	walk(root)
-
-	needle := strings.ToLower(query)
-	var lines []string
-	scanned := 0
-	for _, rel := range paths {
-		if len(lines) >= searchMaxMatches {
-			break
-		}
-		abs, err := h.FS.Resolve(rel)
-		if err != nil {
-			continue // jail rejection — skip silently, don't leak the path
-		}
-		opened, err := h.Docs.OpenFile(abs, rel)
-		if err != nil || opened.Reason != "" {
-			continue
-		}
-		scanned++
-		for _, para := range blocksToParagraphs(opened.BlocksJSON) {
-			if len(lines) >= searchMaxMatches {
-				break
-			}
-			idx := strings.Index(strings.ToLower(para), needle)
-			if idx < 0 {
-				continue
-			}
-			start := max(0, idx-searchSnippetRad)
-			end := min(len(para), idx+len(query)+searchSnippetRad)
-			snip := strings.TrimSpace(para[start:end])
-			lines = append(lines, fmt.Sprintf("- %s — “…%s…\"", rel, snip))
-		}
-	}
-	var b strings.Builder
-	if len(lines) == 0 {
-		fmt.Fprintf(&b, "Search %q — no matches (%d file(s) scanned).", query, scanned)
-	} else {
-		fmt.Fprintf(&b, "Search %q — %d match(es) in %d file(s) scanned:\n%s",
-			query, len(lines), scanned, strings.Join(lines, "\n"))
-	}
-	out := b.String()
-	if len(out) > searchMaxOut {
-		out = out[:searchMaxOut-20] + "\n…[truncated]"
-	}
-	return ToolResult{Name: ToolSearchWorkspace, OK: true, Content: out}
-}
-
-// blocksToParagraphs decodes BlocksJSON to per-block plain text (one entry
-// per paragraph block; headings/lists flattened the same way).
-func blocksToParagraphs(blocksJSON string) []string {
-	if strings.TrimSpace(blocksJSON) == "" {
-		return nil
-	}
-	var wrap struct {
-		Blocks []struct {
-			Segments []struct {
-				Text string `json:"text"`
-			} `json:"segments"`
-		} `json:"blocks"`
-	}
-	if err := json.Unmarshal([]byte(blocksJSON), &wrap); err != nil {
-		return nil
-	}
-	var out []string
-	for _, bl := range wrap.Blocks {
-		var sb strings.Builder
-		for _, s := range bl.Segments {
-			sb.WriteString(s.Text)
-		}
-		if t := strings.TrimSpace(sb.String()); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 func (h *ToolHost) proposeSummaryEdit(text, op, target, oldText string) ToolResult {	text = strings.TrimSpace(text)
@@ -632,7 +378,7 @@ func (h *ToolHost) proposeSummaryEdit(text, op, target, oldText string) ToolResu
 	if op == "modify" && oldText != "" && strings.Contains(text, oldText[:min(24, len(oldText))]) {
 		highlight = oldText
 	}
-	h.lastProposal = proposal{Op: op, Target: target, OldText: oldText, NewText: text, Highlight: highlight}
+	h.lastProposal = Proposal{Op: op, Target: target, OldText: oldText, NewText: text, Highlight: highlight}
 	verb := map[string]string{"insert": "insertion", "modify": "revision", "delete": "deletion"}[op]
 	return ToolResult{
 		Name: ToolProposeSummaryEdit,
@@ -645,9 +391,9 @@ func (h *ToolHost) proposeSummaryEdit(text, op, target, oldText string) ToolResu
 }
 
 // LastProposal returns the latest successful propose_summary_edit.
-func (h *ToolHost) LastProposal() proposal {
+func (h *ToolHost) LastProposal() Proposal {
 	if h == nil {
-		return proposal{}
+		return Proposal{}
 	}
 	return h.lastProposal
 }

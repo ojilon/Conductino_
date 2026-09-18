@@ -10,12 +10,28 @@
 import { useState } from "react";
 import { useApp, activeBrowserTab } from "../../state/appState";
 import { useAIRunners } from "../../state/aiController";
-import { BROWSE_PHASES, type Relevance, type Source } from "../../types/domain";
+import { BROWSE_PHASES, type Document, type Relevance, type Source } from "../../types/domain";
 import { Icon } from "../../components/icons";
 import { Badge, Button, EmptyState, IconBtn, Menu, MenuItem, Spinner } from "../../components/ui";
 import { cn } from "../../utils/cn";
 import { truncate, uid } from "../../utils/helpers";
-import { makeDocumentFromSource } from "../../mock/data";
+
+/**
+ * Build a reader document from a real Source record ("Send to Reader").
+ * Renders only the source's own fields (title, abstract) — invents nothing.
+ */
+function makeDocumentFromSource(sourceId: string, source: Source, docId: string): Document {
+  return {
+    id: docId,
+    workspaceId: source.workspaceId,
+    kind: "source",
+    sourceId,
+    currentPage: 1,
+    metadata: { title: source.title, format: source.kind },
+    blocks: [{ id: `${docId}-p1`, type: "paragraph", segments: [{ text: source.abstract }] }],
+    highlights: [],
+  };
+}
 
 const RELEVANCE: Record<Relevance, { label: string; tone: "moss" | "iris" | "blue" }> = {
   highest: { label: "Highest relevance", tone: "moss" },

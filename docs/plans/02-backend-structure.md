@@ -1,5 +1,12 @@
 # Backend structure — services layout & storage
 
+> **Superseded by `06-backend-resplit.md`** (history preserved, not rewritten).
+> The `services/ai/` split it describes has since grown into top-level
+> `backend/{ai,extract,tools,usage}` packages plus a split `models/`
+> (`document/ai/storage`). Read 06 for the current layout; read this file
+> for the original principles (backend as system of record, thin Wails
+> boundary, storage migration path) — all still in force.
+
 ## 1. Principles
 
 1. **Backend is the system of record** for workspaces, sources metadata,

@@ -32,8 +32,8 @@ against the tree at time of writing.
     (`frontend/src/features/reader/ReaderMode.tsx:61`).
   - Stale carriers: `metadata.path` (`frontend/src/types/domain.ts:203`), set
     at open time (`frontend/src/features/reader/ReaderMode.tsx:139`) and from
-    mock factory (`frontend/src/mock/data.ts:660`); consumed by Show-in-library
-    and Show-containing-folder without root validation.
+    Send-to-Reader (`makeDocumentFromSource` in `AIBrowsePanel.tsx`); consumed
+    by Show-in-library and Show-containing-folder without root validation.
 - **Suggested fix — two candidates:**
   - (a) *Invalidate on switch:* on `SelectFolder` success, close (or mark
     stale) every tab whose document has a `metadata.path`. Simple, no model
@@ -69,8 +69,8 @@ against the tree at time of writing.
 - **Current code:**
   - Collapse point: `catch { return null; }`
     (`frontend/src/services/backend.ts:189`).
-  - Fallback branch: `ReaderMode.tsx:151` (`catch` → fall through),
-    mock factory `ReaderMode.tsx:154`.
+  - Fallback branch: REMOVED — `ReaderMode.openFile` reports honest errors
+    (toast + typed `reason`) with no fabricated document; `src/mock/` deleted.
   - Failure producers: `ErrUnsupportedType` (`documents.go:43`), size cap
     (`documents.go:81`), `os.ReadFile` errors (`documents.go:87`), `Resolve`
     rejection (`filesystem.go:87`).
@@ -151,20 +151,19 @@ is the as-is inventory.
    view, never the source of truth. This preserves the swap-editor-later
    property (storage format independent of the editor library).
 5. On save: Slate value → block/segment JSON (inverse of step 4) → a second
-   backend library writes the target file type on disk (e.g. DOCX writer for
-   summary documents). Read path and write path are separate libraries behind
-   the `Documents` service boundary (`backend/services/documents.go:29`).
+  backend library writes the target file type on disk (e.g. DOCX writer for
+  summary documents). Read path and write path are separate libraries behind
+  the `Documents` service boundary (`backend/extract/extract.go`).
 6. Inventory (exists vs unbuilt):
-   - Block/segment model: EXISTS (mock-authored today — `mock/data.ts:500`
-     hand-written documents; real `.txt` arm emits conforming JSON via
-     `openTextFile`, `backend/services/documents.go:86`).
+   - Block/segment model: EXISTS (real-authored — extraction arms and the
+     Send-to-Reader factory; no hand-written documents remain).
     - Slate integration: EXISTS (`frontend/src/features/reader/slateAdapter.ts`
       `toSlate`/`fromSlate`, `SummaryDocumentView.tsx` Slate editor; canonical
       blocks stay the source of truth, decorations are transient).
     - Extraction to block/segment JSON: EXISTS for `.txt`/`.md` (real,
-      `os` Stat-gated + bounded reads, `backend/services/documents.go`) and
-      `.docx` (stdlib ZIP+OOXML, `backend/services/docx.go`). Block IDs are
-      content-addressed and stable (`backend/services/blockids.go`); successful
+      `os` Stat-gated + bounded reads, `backend/extract/extract.go`) and
+      `.docx` (stdlib ZIP+OOXML, `backend/extract/docx.go`). Block IDs are
+      content-addressed and stable (`backend/extract/ids.go`); successful
       extractions are cached in SQLite (`extract_cache`, root-anchored path +
       mtime + size, 200-entry LRU). PDF / HTML extraction: UNIMPLEMENTED
       (`default:` arm returns `ErrUnsupportedType` with a typed reason).
@@ -247,5 +246,5 @@ not a library-selection criterion. No OCR libraries evaluated.
 
 OCR engines and OCR-bound PDF pipelines (scanned PDFs); HTML extractors
 (`golang.org/x/net/html` is already the documented candidate in
-`backend/services/documents.go:20` and needs no evaluation); cloud/proprietary
+`backend/extract/extract.go` and needs no evaluation); cloud/proprietary
 extraction APIs (offline-first project).

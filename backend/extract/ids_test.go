@@ -1,4 +1,4 @@
-package services
+package extract
 
 import (
 	"encoding/json"
@@ -91,18 +91,5 @@ func TestStableBlockIDsDuplicateParagraphs(t *testing.T) {
 	}
 }
 
-func TestExtractCacheRoundTrip(t *testing.T) {
-	s := NewStorage()
-	e := CachedExtract{Path: "root\x00a.txt", Mtime: 1, Size: 5, Title: "a", BlocksJSON: `{"blocks":[]}`}
-	if err := s.PutCachedExtract(e); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.GetCachedExtract(e.Path, 1, 5)
-	if err != nil || got == nil || got.Title != "a" {
-		t.Fatalf("cache hit: %+v err=%v", got, err)
-	}
-	// mtime change invalidates.
-	if got, _ := s.GetCachedExtract(e.Path, 2, 5); got != nil {
-		t.Fatalf("stale entry returned: %+v", got)
-	}
-}
+// NOTE: TestExtractCacheRoundTrip lives in services/storage_test.go —
+// the cache belongs to storage, not extraction.

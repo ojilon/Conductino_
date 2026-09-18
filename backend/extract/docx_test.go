@@ -1,4 +1,4 @@
-package services
+package extract
 
 import (
 	"os"
@@ -10,9 +10,9 @@ import (
 func TestWriteAndReadDOCXRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "summary.docx")
-	blocks := []docxBlock{
-		{ID: "h1", Type: "heading", Level: 1, Segments: []docxSegment{{Text: "Chemiosmosis"}}},
-		{ID: "p1", Type: "paragraph", Segments: []docxSegment{
+	blocks := []DocxBlock{
+		{ID: "h1", Type: "heading", Level: 1, Segments: []DocxSegment{{Text: "Chemiosmosis"}}},
+		{ID: "p1", Type: "paragraph", Segments: []DocxSegment{
 			{Text: "Mitchell proposed "},
 			{Text: "chemiosmotic", Em: true},
 			{Text: " coupling with "},

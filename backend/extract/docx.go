@@ -1,4 +1,4 @@
-package services
+package extract
 
 import (
 	"archive/zip"
@@ -25,24 +25,24 @@ const maxDocxBytes = 20 << 20 // 20 MiB
 
 // ---- shared block shapes (JSON wire matches frontend DocumentBlock) ----
 
-type docxBlock struct {
+type DocxBlock struct {
 	ID        string         `json:"id"`
 	Type      string         `json:"type"`
 	Level     int            `json:"level,omitempty"`
-	Segments  []docxSegment  `json:"segments"`
-	ListItems [][]docxSegment `json:"listItems,omitempty"`
+	Segments  []DocxSegment  `json:"segments"`
+	ListItems [][]DocxSegment `json:"listItems,omitempty"`
 }
 
-type docxSegment struct {
+type DocxSegment struct {
 	Text   string `json:"text"`
 	Em     bool   `json:"em,omitempty"`
 	Strong bool   `json:"strong,omitempty"`
 }
 
 // BlocksToJSON marshals blocks into the {blocks:[...]} wire shape.
-func BlocksToJSON(blocks []docxBlock) (string, error) {
+func BlocksToJSON(blocks []DocxBlock) (string, error) {
 	if len(blocks) == 0 {
-		blocks = []docxBlock{{ID: "empty", Type: "paragraph", Segments: []docxSegment{{Text: ""}}}}
+		blocks = []DocxBlock{{ID: "empty", Type: "paragraph", Segments: []DocxSegment{{Text: ""}}}}
 	}
 	b, err := json.Marshal(map[string]any{"blocks": blocks})
 	if err != nil {
@@ -52,9 +52,9 @@ func BlocksToJSON(blocks []docxBlock) (string, error) {
 }
 
 // ParseBlocksJSON decodes the frontend/AI wire format.
-func ParseBlocksJSON(s string) ([]docxBlock, error) {
+func ParseBlocksJSON(s string) ([]DocxBlock, error) {
 	var envelope struct {
-		Blocks []docxBlock `json:"blocks"`
+		Blocks []DocxBlock `json:"blocks"`
 	}
 	if err := json.Unmarshal([]byte(s), &envelope); err != nil {
 		return nil, err
@@ -160,10 +160,10 @@ type wText struct {
 	Value string `xml:",chardata"`
 }
 
-func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
+func parseDocumentXML(data []byte, relKey string) ([]DocxBlock, error) {
 	cleaned := stripXMLNamespaces(data)
 	dec := xml.NewDecoder(bytes.NewReader(cleaned))
-	blocks := []docxBlock{}
+	blocks := []DocxBlock{}
 	seen := map[string]int{}
 	// take assigns a stable content-addressed ID (issues 7+27).
 	take := func(typ string, level int, text string) string {
@@ -174,7 +174,7 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 	}
 	// Consecutive list paragraphs group into one list block (fidelity: flat,
 	// levels dropped — see file note).
-	var pendingList [][]docxSegment
+	var pendingList [][]DocxSegment
 	var pendingText strings.Builder
 	flushList := func() {
 		if len(pendingList) == 0 {
@@ -186,17 +186,17 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 			return
 		}
 		text := pendingText.String()
-		blocks = append(blocks, docxBlock{
+		blocks = append(blocks, DocxBlock{
 			// Segments must be non-nil: nil marshals to JSON null and
 			// crashes frontend .map() calls (ReaderMode openFile). The
 			// list's text lives in ListItems; Segments stays empty-but-array.
 			ID: take("list", 0, text), Type: "list",
-			Segments: []docxSegment{}, ListItems: pendingList,
+			Segments: []DocxSegment{}, ListItems: pendingList,
 		})
 		pendingList = nil
 		pendingText.Reset()
 	}
-	appendPara := func(typ string, level int, segs []docxSegment) {
+	appendPara := func(typ string, level int, segs []DocxSegment) {
 		if len(blocks) >= maxTextBlocks {
 			return
 		}
@@ -204,7 +204,7 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 		for _, s := range segs {
 			full.WriteString(s.Text)
 		}
-		b := docxBlock{ID: take(typ, level, full.String()), Type: typ, Segments: segs}
+		b := DocxBlock{ID: take(typ, level, full.String()), Type: typ, Segments: segs}
 		if level > 0 {
 			b.Level = level
 		}
@@ -276,20 +276,20 @@ func parseDocumentXML(data []byte, relKey string) ([]docxBlock, error) {
 				continue
 			}
 			joined := strings.Join(cells, " | ")
-			appendPara("paragraph", 0, []docxSegment{{Text: joined}})
+			appendPara("paragraph", 0, []DocxSegment{{Text: joined}})
 		}
 	}
 	flushList()
 	if len(blocks) == 0 {
-		blocks = append(blocks, docxBlock{ID: take("paragraph", 0, ""), Type: "paragraph", Segments: []docxSegment{{Text: ""}}})
+		blocks = append(blocks, DocxBlock{ID: take("paragraph", 0, ""), Type: "paragraph", Segments: []DocxSegment{{Text: ""}}})
 	}
 	return blocks, nil
 }
 
 // paraViewOf classifies one paragraph: heading level, run segments with
 // marks, and whether it is a list item (w:numPr present).
-func paraViewOf(p wParagraph) (typ string, level int, segs []docxSegment, isList bool) {
-	segs = make([]docxSegment, 0, len(p.Runs))
+func paraViewOf(p wParagraph) (typ string, level int, segs []DocxSegment, isList bool) {
+	segs = make([]DocxSegment, 0, len(p.Runs))
 	for _, r := range p.Runs {
 		var text strings.Builder
 		for _, t := range r.Texts {
@@ -299,7 +299,7 @@ func paraViewOf(p wParagraph) (typ string, level int, segs []docxSegment, isList
 		if s == "" {
 			continue
 		}
-		seg := docxSegment{Text: s}
+		seg := DocxSegment{Text: s}
 		if r.Props != nil {
 			if r.Props.Bold != nil {
 				seg.Strong = true
@@ -368,7 +368,7 @@ func stripXMLNamespaces(data []byte) []byte {
 // ---- WRITE: blocks → DOCX ----
 
 // WriteDOCX writes a minimal OOXML package to absPath from canonical blocks.
-func WriteDOCX(absPath string, blocks []docxBlock) error {
+func WriteDOCX(absPath string, blocks []DocxBlock) error {
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return err
 	}
@@ -415,7 +415,7 @@ const documentRelsXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 </Relationships>`
 
-func buildDocumentXML(blocks []docxBlock) string {
+func buildDocumentXML(blocks []DocxBlock) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
 	b.WriteString(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">`)
@@ -426,8 +426,8 @@ func buildDocumentXML(blocks []docxBlock) string {
 		// paragraphs — readable, not round-trip-identical (documented).
 		if blk.Type == "list" && len(blk.ListItems) > 0 {
 			for _, item := range blk.ListItems {
-				item := append([]docxSegment{{Text: "• "}}, item...)
-				writeParagraphXML(&b, docxBlock{ID: blk.ID, Type: "paragraph", Segments: item})
+				item := append([]DocxSegment{{Text: "• "}}, item...)
+				writeParagraphXML(&b, DocxBlock{ID: blk.ID, Type: "paragraph", Segments: item})
 			}
 			continue
 		}
@@ -438,7 +438,7 @@ func buildDocumentXML(blocks []docxBlock) string {
 	return b.String()
 }
 
-func writeParagraphXML(b *strings.Builder, blk docxBlock) {
+func writeParagraphXML(b *strings.Builder, blk DocxBlock) {
 	b.WriteString(`<w:p>`)
 	if blk.Type == "heading" {
 		level := blk.Level
@@ -449,10 +449,10 @@ func writeParagraphXML(b *strings.Builder, blk docxBlock) {
 	}
 	segs := blk.Segments
 	if blk.Type == "list" && len(blk.ListItems) > 0 {
-		var flat []docxSegment
+		var flat []DocxSegment
 		for i, row := range blk.ListItems {
 			if i > 0 {
-				flat = append(flat, docxSegment{Text: "\n"})
+				flat = append(flat, DocxSegment{Text: "\n"})
 			}
 			flat = append(flat, row...)
 		}

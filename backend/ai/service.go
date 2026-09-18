@@ -1,16 +1,18 @@
-// Package ai is the Go-side model access layer behind the Wails boundary.
+// Package ai is the network-only model access layer (plan 06).
 //
-// The Gemini API key is loaded from the process environment or the git-ignored
-// backend/.ai.env file (see resolveAPIKey), so it never crosses the Wails
-// boundary into JS. The React UI talks to this package through a thin TS
-// provider (frontend/src/services/ai.ts → App.StreamAIRequest → "ai://event").
+// It depends on backend/tools, backend/extract, backend/usage, and the
+// storage interface — never the reverse. Offline work stays testable
+// without API keys; verify with:
+// go list -deps ./backend/extract ./backend/tools ./backend/usage |
+//   findstr /i "net/http wails" (expect no output).
 //
 // Layout:
 //   service.go  — AIService interface, New, Run entry, key resolution
+//   backends/   — (plan 05/08) gemini.go, openai_compat.go per-backend files
 //   gemini.go   — HTTP client against generateContent
 //   prompts.go  — operation → prompt templates and result encoding
-//   tools.go    — folder-scoped tool registry + Resolve guards (Phase 5)
-//   chat.go     — multi-turn tool loop for AI_CHAT
+//   chat.go     — multi-turn tool loop (calls tools.ToolHost)
+//   tools_alias.go — one-release aliases (delete per plan 06 step 6)
 package ai
 
 import (
@@ -23,6 +25,7 @@ import (
 	"time"
 
 	"Conductino/backend/models"
+	"Conductino/backend/usage"
 )
 
 // EventSink receives one streaming unit of an AI operation.
@@ -125,7 +128,7 @@ func (g *GeminiService) ProviderName() string {
 // per provider plus tool call counts. Empty string when nothing ran yet.
 func (g *GeminiService) UsageMeters() string {
 	parts := []string{}
-	if u := usageSnapshot(); u != "" {
+	if u := usage.UsageSnapshot(); u != "" {
 		parts = append(parts, u)
 	}
 	if t := toolAuditSummary(); t != "" {
@@ -398,7 +401,7 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 	}
 	// Repeatable one-shots skip the network on a fresh cache hit (plan 05
 	// §3.4). Chat and merges are never cached — they must stay fresh.
-	if cached, ok := explainCacheGet(op, req); ok {
+	if cached, ok := usage.ExplainCacheGet(op, req); ok {
 		emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, cached)})
 		return
 	}
@@ -410,6 +413,6 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 		emit(models.AIEvent{Type: "error", Message: err.Error()})
 		return
 	}
-	explainCachePut(op, req, text)
+	usage.ExplainCachePut(op, req, text)
 	emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, text)})
 }

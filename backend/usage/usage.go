@@ -1,4 +1,4 @@
-package ai
+package usage
 
 import (
 	"fmt"
@@ -34,16 +34,37 @@ type usageTick struct {
 	provider string
 }
 
-// estimateTokens is the chars/4 heuristic (plan 05 §3.2).
-func estimateTokens(s string) int {
+// EstimateTokens is the chars/4 heuristic (plan 05 §3.2).
+func EstimateTokens(s string) int {
 	return len(s) / 4
 }
 
-func recordUsage(provider, operation, class, prompt string, start time.Time, err error) {
+// IsRateLimitOrUnavailable classifies errors that should trigger failover.
+// Intentionally broad: free-tier exhaustion often returns varied wording.
+// Lives here (not ai) so parallel providers and budgets share one taxonomy.
+func IsRateLimitOrUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"429", "rate limit", "rate-limit", "quota", "resource exhausted",
+		"resource_exhausted", "503", "unavailable", "overloaded", "capacity",
+		"too many requests", "limit exceeded", "exceeded your current",
+		"billing", "permission denied", "api key not valid",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func RecordUsage(provider, operation, class, prompt string, start time.Time, err error) {
 	status := "ok"
 	if err != nil {
 		status = "error"
-		if isRateLimitOrUnavailable(err) {
+		if IsRateLimitOrUnavailable(err) {
 			status = "rate_limited"
 		}
 	}
@@ -52,7 +73,7 @@ func recordUsage(provider, operation, class, prompt string, start time.Time, err
 		Provider:  provider,
 		Operation: operation,
 		CostClass: class,
-		InputEst:  estimateTokens(prompt),
+		InputEst:  EstimateTokens(prompt),
 		Status:    status,
 		LatencyMs: time.Since(start).Milliseconds(),
 	}
@@ -72,9 +93,9 @@ func recordUsage(provider, operation, class, prompt string, start time.Time, err
 	usageCalls = usageCalls[i:]
 }
 
-// usageSnapshot renders one line per provider for Settings / debugging:
+// UsageSnapshot renders one line per provider for Settings / debugging:
 // "gemini · 12 calls (1 err) · ~8k in-est · 2 rpm". Empty when no calls yet.
-func usageSnapshot() string {
+func UsageSnapshot() string {
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	if len(usageRing) == 0 {
@@ -122,8 +143,8 @@ func usageSnapshot() string {
 	return strings.Join(parts, "\n")
 }
 
-// usageStats is the test hook (counts only, no formatting).
-func usageStats() (calls int, byProvider map[string]int) {
+// UsageStats is the test hook (counts only, no formatting).
+func UsageStats() (calls int, byProvider map[string]int) {
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	byProvider = map[string]int{}
