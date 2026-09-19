@@ -78,6 +78,9 @@ type ChatMessageRecord struct {
 	Content  string `json:"content"`
 	// DocumentID records the focused document when the message was sent.
 	DocumentID string `json:"documentId,omitempty"`
+	// ToolTrace is JSON [{tool, ok, ms}] for assistant turns that ran tools
+	// (the chat "thinking" log). Empty for user messages and pre-trace rows.
+	ToolTrace string `json:"toolTrace,omitempty"`
 	// CreatedAt is Unix epoch milliseconds (INTEGER in SQLite).
 	CreatedAt int64 `json:"createdAt,omitempty"`
 }

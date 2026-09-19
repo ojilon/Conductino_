@@ -56,6 +56,10 @@ type AIRequest struct {
 	// which documents were meant. A mentioned summary overrides the
 	// workspace primary as the proposal target.
 	MentionIDs []string `json:"mentionIds,omitempty"`
+	// SummaryPath is the workspace-relative path token of the mapped summary
+	// file (from the frontend document metadata). publish_summary writes
+	// through ONLY to this path — never a guessed location.
+	SummaryPath string `json:"summaryPath,omitempty"`
 	// Focused pending proposal for chat-targeted revise. The model revises
 	// it by emitting a modify/delete proposal against the same block.
 	FocusedChange *FocusedChange `json:"focusedChange,omitempty"`

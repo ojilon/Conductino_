@@ -52,6 +52,7 @@ export namespace models {
 	    summaryContent?: string;
 	    primarySummaryId?: string;
 	    mentionIds?: string[];
+	    summaryPath?: string;
 	    focusedChange?: FocusedChange;
 	    requestId?: string;
 	
@@ -78,6 +79,7 @@ export namespace models {
 	        this.summaryContent = source["summaryContent"];
 	        this.primarySummaryId = source["primarySummaryId"];
 	        this.mentionIds = source["mentionIds"];
+	        this.summaryPath = source["summaryPath"];
 	        this.focusedChange = this.convertValues(source["focusedChange"], FocusedChange);
 	        this.requestId = source["requestId"];
 	    }
@@ -138,6 +140,7 @@ export namespace models {
 	    role: string;
 	    content: string;
 	    documentId?: string;
+	    toolTrace?: string;
 	    createdAt?: number;
 	
 	    static createFrom(source: any = {}) {
@@ -151,6 +154,7 @@ export namespace models {
 	        this.role = source["role"];
 	        this.content = source["content"];
 	        this.documentId = source["documentId"];
+	        this.toolTrace = source["toolTrace"];
 	        this.createdAt = source["createdAt"];
 	    }
 	}

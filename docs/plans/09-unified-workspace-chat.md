@@ -23,15 +23,22 @@ conversation; a fresh start is always explicit via **New chat**.
 them (`aiController.ts`). `ChatThread.documentId` stays as "started from"
 provenance; matching ignores it.
 
-## 3. Still open (do not regress into per-doc threads)
+## 3. Landed since (do not regress into per-doc threads)
 
-- **History on folder switch:** `ensureThread` finds/activates the workspace
-  thread, but older messages live in SQLite (`SaveThread`/`AppendMessage`
-  bridges). On `workspace.setActive`, load that workspace's thread from the
-  backend instead of starting visually empty. (Planned: Phase 16 remainder.)
-- **Thread list UI:** `byId` accumulates New-chat threads; the panel shows
-  only the active one. A minimal switcher (title + updatedAt) comes with the
-  chat-observability work (08 §4).
-- **Backend thread authority:** frontend `AppState.chat` is still the live
-  thread; SQLite is the archive. Flip to backend-owned threads with the
+- **Make workspace summary:** disk-opened files used to stay kind "source"
+  forever (`workspace.createSummary`/`setPrimarySummary` had no UI), so
+  every merge/propose path silently dropped for lack of a target. Now the
+  source header has a **Make summary** button: flips the doc editable +
+  sets the workspace primary (persisted via `App.SetPrimarySummary`).
+  `workspace.setPrimarySummary` owns the kind flip in the reducer.
+- **No-summary guidance:** when proposals arrive but no summary is mapped,
+  the UI toasts the Make-summary fix instead of dropping silently.
+- **History on folder switch:** `pickFolder` loads the workspace's threads
+  from SQLite (latest first) via `loadWorkspaceThreads`; in-memory wins on
+  id collision; browser loads nothing.
+- **Thread list UI:** workspace threads (newest first) as pills above the
+  composer; click activates. History preserved by New chat.
+- **Backend persistence:** every thread create + message append persists
+  best-effort (`saveChatThread`/`appendChatMessage`; silent no-op in browser).
+- **Still open:** backend-owned threads (SQLite as authority) flip with the
   workflow runner (11), not before.

@@ -84,6 +84,14 @@ func TestSQLiteRoundTrip(t *testing.T) {
 	if v, ok := s.GetSetting("last_library_root"); !ok || v != dir {
 		t.Fatalf("setting %q %v", v, ok)
 	}
+	// Thinking trace survives the round trip (chat "thinking" log).
+	trace := `[{"tool":"read_source","ok":true,"ms":12}]`
+	_ = s.UpsertThread(ChatThreadRecord{ID: "t1", WorkspaceID: "ws1", Title: "chat"})
+	_ = s.AppendMessage(ChatMessageRecord{ID: "m-trace", ThreadID: "t1", Role: "assistant", Content: "done", ToolTrace: trace})
+	msgs, err := s.ListMessages("t1")
+	if err != nil || len(msgs) != 1 || msgs[0].ToolTrace != trace {
+		t.Fatalf("trace round trip: %+v %v", msgs, err)
+	}
 }
 
 func TestExtractCacheRoundTrip(t *testing.T) {

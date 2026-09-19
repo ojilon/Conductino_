@@ -62,10 +62,52 @@ func loadEnvKey(name string) string {
 	return ""
 }
 
+// keySource reports WHERE loadEnvKey found name — never the value itself.
+// Startup diagnostic: when a provider shows Configured()==false despite a key
+// in backend/.ai.env, this tells whether the process saw a different cwd
+// (relative paths miss), a nearer file shadowing it, or a malformed line.
+func keySource(name string) string {
+	if strings.TrimSpace(os.Getenv(name)) != "" {
+		return "process env"
+	}
+	for _, p := range []string{".ai.env", "backend/.ai.env"} {
+		if readKeyFile(p, name) != "" {
+			return p
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), ".ai.env")
+		if readKeyFile(p, name) != "" {
+			return "exe-dir .ai.env"
+		}
+	}
+	return "missing"
+}
+
+// keyEnvFor maps a backend name to the env var holding its key (for
+// actionable auth-error messages).
+func keyEnvFor(backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "groq":
+		return "GROQ_API_KEY"
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
+	default:
+		return "GEMINI_API_KEY"
+	}
+}
+
 // isRateLimitOrUnavailable classifies errors that should trigger failover.
 // Canonical implementation lives in backend/usage (telemetry owns the error
-// taxonomy so parallel providers share it); kept here as a thin alias
+// taxonomy so parallel providers share one taxonomy); kept here as a thin alias
 // during the migration.
 func isRateLimitOrUnavailable(err error) bool {
 	return usage.IsRateLimitOrUnavailable(err)
+}
+
+// isAuthError classifies invalid-key/auth errors, which must NOT trigger
+// silent failover (a bad key never heals by trying another provider — the
+// user has to fix config). Thin alias over the usage taxonomy.
+func isAuthError(err error) bool {
+	return usage.IsAuthError(err)
 }

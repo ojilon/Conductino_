@@ -182,8 +182,11 @@ func LoadDir(dir string) ([]Skill, error) {
 }
 
 // Match returns skills whose `when` mentions the operation or intent
-// (case-insensitive substring). The prompt assembler caps the result
-// (at most 2 excerpts, ~1500 chars total — see Excerpt).
+// (case-insensitive). Operation matches by substring either way; intent
+// matches when a when-phrase appears inside it ("add to summary" fires on
+// "please add this to summary") — so routing works for skills no operation
+// names. The prompt assembler caps the result (at most 2 excerpts, ~1500
+// chars total — see Excerpt).
 func Match(skills []Skill, operation, intent string) []Skill {
 	op := strings.ToLower(operation)
 	in := strings.ToLower(intent)
@@ -191,7 +194,8 @@ func Match(skills []Skill, operation, intent string) []Skill {
 	for _, s := range skills {
 		for _, w := range s.When {
 			wl := strings.ToLower(w)
-			if (op != "" && strings.Contains(wl, op)) || (in != "" && strings.Contains(wl, in)) {
+			if (op != "" && strings.Contains(wl, op)) ||
+				(in != "" && (strings.Contains(wl, in) || strings.Contains(in, wl))) {
 				out = append(out, s)
 				break
 			}

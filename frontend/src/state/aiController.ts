@@ -12,10 +12,11 @@
 
 import { useCallback, useRef } from "react";
 import { useApp, activeReaderDocument, primarySummaryDocument, activeWorkspace } from "./appState";
-import { buildContextPack } from "./contextPack";
+import { buildContextPackAsync } from "./contextPack";
 import { getAIProvider } from "../services/ai";
-import { uid } from "../utils/helpers";
-import type { AIActivity, AIOperation, ChatMessage, ChatThread, ChatTurn, Document } from "../types/domain";
+import { saveChatThread, appendChatMessage, backend } from "../services/backend";
+import { uid, parseBlocksWire } from "../utils/helpers";
+import type { AIActivity, AIOperation, AIResult, ChatMessage, ChatThread, ChatTurn, Document, SummaryDiff } from "../types/domain";
 import { resolveMentions } from "./mentions";
 
 export interface SelectionRef {
@@ -107,14 +108,15 @@ export function useAIRunners() {
   /* ---------- Explanation family (selection → companion panel) ---------- */
 
   const runExplain = useCallback(
-    (operation: AIOperation, selection: SelectionRef, customPrompt?: string) => {
+    async (operation: AIOperation, selection: SelectionRef, customPrompt?: string) => {
       const doc = state.documents[selection.documentId];
       const meta = doc?.metadata;
       const sourceLabel = meta?.author
         ? `${meta.author}${meta.year ? ` (${meta.year})` : ""}${meta.venue ? `, ${meta.venue}` : ""}`
         : "Open document";
       const wsId = activeWorkspace(state)?.id ?? doc?.workspaceId;
-      const contextPack = buildContextPack(doc, {
+      // Server-side assembly when bridged (plan 11 §4); local fallback in browser.
+      const contextPack = await buildContextPackAsync(doc, {
         blockId: selection.blockId,
         text: selection.text,
         range: selection.range,
@@ -184,7 +186,7 @@ export function useAIRunners() {
   /* ---------- Include selection in the summary (source → summary) ---------- */
 
   const runIncludeInSummary = useCallback(
-    (selection: SelectionRef) => {
+    async (selection: SelectionRef) => {
       const summary = primarySummaryDocument(state);
       if (!summary) {
         dispatch({
@@ -203,7 +205,7 @@ export function useAIRunners() {
         selection: selection.text,
         message: "Extracting claim…",
       });
-      const contextPack = buildContextPack(sourceDoc, {
+      const contextPack = await buildContextPackAsync(sourceDoc, {
         blockId: selection.blockId,
         text: selection.text,
         range: selection.range,
@@ -241,7 +243,9 @@ export function useAIRunners() {
                 newContent: text,
                 sourceId,
                 activityId: id,
-                status: "pending",
+                // User-explicit (toolbar click): the insert lands directly in
+                // the editor — no card review. Single-path: accepted at birth.
+                status: "accepted",
                 createdAt: Date.now(),
               },
               block: { id: blockId, type: "paragraph", changeId: changeId, segments: [{ text }] },
@@ -253,7 +257,7 @@ export function useAIRunners() {
               changeIds: [changeId],
             });
             dispatch({ type: "selection.set", selection: null });
-            dispatch({ type: "toast", message: "Change proposed in Research Summary — review it in the document" });
+            dispatch({ type: "toast", message: "Added to the summary — edit inline or ask the AI to revise" });
           },
           onError: (message) => {
             finish(id, { status: "error", error: message });
@@ -263,42 +267,6 @@ export function useAIRunners() {
       );
     },
     [state, start, finish, dispatch],
-  );
-
-  /* ---------- Revise a pending change ---------- */
-
-  const runRevise = useCallback(
-    (changeId: string) => {
-      const change = state.changes[changeId];
-      if (!change) return;
-      const id = start("AI_REWRITE", {
-        documentId: change.documentId,
-        message: "Revising draft…",
-      });
-      cancels.current[id] = getAIProvider().run(
-        { operation: "AI_REWRITE", query: change.newContent, changeId },
-        {
-          onPhase: (_i, label) =>
-            dispatch({ type: "activity.update", id, patch: { message: `${label}…` } }),
-          onBrowseSources: () => undefined,
-          onDone: (result) => {
-            if (result.revision?.trim()) {
-              dispatch({ type: "change.revise", id: changeId, newContent: result.revision });
-              finish(id, { status: "completed", message: "Revised the proposed change", changeIds: [changeId] });
-              dispatch({ type: "toast", message: "AI revised the change — review again" });
-            } else {
-              finish(id, { status: "completed", message: "Revise finished with no suggestion", changeIds: [changeId] });
-              dispatch({ type: "toast", message: "AI unavailable now — change left as-is." });
-            }
-          },
-          onError: (message) => {
-            finish(id, { status: "error", error: message });
-            dispatch({ type: "toast", message: "AI unavailable now — change left as-is." });
-          },
-        },
-      );
-    },
-    [state.changes, start, finish, dispatch],
   );
 
   /* ---------- Companion panel: find related sources ---------- */
@@ -361,6 +329,8 @@ export function useAIRunners() {
         updatedAt: now,
       };
       dispatch({ type: "chat.ensure", thread });
+      // Persist best-effort (desktop SQLite; silent no-op in browser).
+      void saveChatThread(thread);
       return thread.id;
     },
     [state, dispatch],
@@ -381,11 +351,48 @@ export function useAIRunners() {
     };
     dispatch({ type: "chat.ensure", thread });
     dispatch({ type: "chat.setActive", id: thread.id });
+    void saveChatThread(thread);
     return thread.id;
   }, [state, dispatch]);
 
+  // Published summaries: the .docx changed on disk mid-turn — reload blocks
+  // in place (editor-refresh semantics) and decorate write-through diffs.
+  const reloadPublishedSummaries = useCallback(
+    async (published: NonNullable<AIResult["publishedSummaries"]>) => {
+      for (const pub of published) {
+        const doc =
+          state.documents[pub.summaryId] ??
+          Object.values(state.documents).find((d) => d.metadata.path === pub.path);
+        if (!doc?.metadata.path) continue;
+        try {
+          const opened = await backend.filesystem.openFile(doc.metadata.path);
+          if (!opened || opened.reason || !opened.blocksJSON) continue;
+          const blocks = parseBlocksWire(opened.blocksJSON);
+          if (!blocks) continue;
+          dispatch({ type: "doc.blocks.replace", documentId: doc.id, blocks });
+          const diffs: SummaryDiff[] = pub.diffs.map((d) => ({
+            id: uid("df"),
+            op: d.op,
+            target: d.target,
+            text: d.text ?? "",
+            oldText: d.oldText,
+            note: d.note,
+          }));
+          dispatch({ type: "doc.diffs.set", documentId: doc.id, diffs });
+          dispatch({
+            type: "toast",
+            message: `Summary updated — ${diffs.length} diff${diffs.length === 1 ? "" : "s"} to review in-file`,
+          });
+        } catch {
+          dispatch({ type: "toast", message: "Summary published — reopen it to see the changes." });
+        }
+      }
+    },
+    [state.documents, dispatch],
+  );
+
   const runChat = useCallback(
-    (text: string, opts?: { documentId?: string; includeContext?: boolean; selection?: SelectionRef; changeId?: string }) => {
+    async (text: string, opts?: { documentId?: string; includeContext?: boolean; selection?: SelectionRef; changeId?: string }) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
@@ -410,9 +417,17 @@ export function useAIRunners() {
 
       // Region anchor rides along: explicit opt wins, else the live text
       // selection (same document) — "@doc + selected span" needs no guessing.
-      const liveSel = state.selection && state.selection.documentId === documentId
-        ? { documentId: state.selection.documentId, blockId: state.selection.blockId, text: state.selection.text }
-        : undefined;
+      // Range offsets are preserved so the context pack can scope the local
+      // window to the exact span (in-file diff revise path).
+      const liveSel: SelectionRef | undefined =
+        state.selection && state.selection.documentId === documentId
+          ? {
+              documentId: state.selection.documentId,
+              blockId: state.selection.blockId,
+              text: state.selection.text,
+              range: state.selection.range ? { ...state.selection.range } : undefined,
+            }
+          : undefined;
       const sel = opts?.selection ?? liveSel;
 
       // Focused pending proposal for chat-targeted revise ("shorten this
@@ -441,6 +456,7 @@ export function useAIRunners() {
         documentId,
       };
       dispatch({ type: "chat.append", threadId, message: userMsg });
+      void appendChatMessage(threadId, userMsg);
       dispatch({ type: "reader.ui", patch: { aiPanelTab: "chat", aiPanelOpen: true } });
 
       const thread = state.chat.byId[threadId];
@@ -449,9 +465,21 @@ export function useAIRunners() {
         content: m.content,
       }));
 
+      // The anchored selection scopes the pack's local window (±2 blocks
+      // via localWindow) while the pack still carries title + outline +
+      // summary snapshot — targeted edit, full-document context.
       const contextPack =
         opts?.includeContext !== false && doc
-          ? buildContextPack(doc, undefined)
+          ? await buildContextPackAsync(
+              doc,
+              sel?.text?.trim()
+                ? {
+                    blockId: sel.blockId,
+                    text: sel.text,
+                    range: sel.range ? { ...sel.range } : undefined,
+                  }
+                : undefined,
+            )
           : undefined;
 
       const id = start("AI_CHAT", {
@@ -473,6 +501,7 @@ export function useAIRunners() {
           mode: "chat",
           summaryContent: documentPlainText(summary) || undefined,
           primarySummaryId: summary?.id,
+          summaryPath: summary?.metadata.path,
           mentionIds: mentionIds.length ? mentionIds : undefined,
           focusedChange: focusedChange
             ? {
@@ -498,8 +527,17 @@ export function useAIRunners() {
               content: reply,
               createdAt: Date.now(),
               documentId,
+              toolTrace: result.toolTrace?.length ? [...result.toolTrace] : undefined,
             };
             dispatch({ type: "chat.append", threadId, message: assistantMsg });
+            void appendChatMessage(threadId, assistantMsg);
+
+            // Published summaries (publish_summary): the .docx changed on
+            // disk — reload blocks in place (like an editor refresh) and
+            // decorate the write-through diffs in-file for review.
+            if (result.publishedSummaries?.length) {
+              void reloadPublishedSummaries(result.publishedSummaries);
+            }
 
             // Phase 5: proposals → DocumentChanges (user still must accept).
             // Full edit power, not append-only: insert adds, modify rewrites
@@ -511,8 +549,22 @@ export function useAIRunners() {
                 ? [{ op: "insert" as const, newContent: `${result.insertion.text} ${result.insertion.citation ?? "(AI draft)"}` }]
                 : [];
             let changeIds: string[] = [];
+            // Single-path review (plan 11 §3): when the turn published, the
+            // .docx already carries the edits and in-file diffs are the
+            // review — materializing parallel card proposals would fork
+            // reality. Only the unpublishable path keeps cards (and only
+            // with an explicit no-file-path toast below).
+            const publishedIds = new Set((result.publishedSummaries ?? []).map((p) => p.summaryId));
+            const reviewInFile = summary && publishedIds.has(summary.id);
+            // No summary mapped: proposals have nowhere to land. Say so
+            // loudly (with the fix) instead of dropping them silently.
+            let droppedForNoSummary = 0;
             for (const p of proposals) {
-              if (!summary || !p.newContent?.trim()) continue;
+              if (!summary || !p.newContent?.trim()) {
+                if (!summary && p.newContent?.trim()) droppedForNoSummary++;
+                continue;
+              }
+              if (reviewInFile) continue;
               if (p.op === "modify" || p.op === "delete") {
                 // Anchor to the named block; fall back to fuzzy-matching the
                 // old span when the model returned text but no block id.
@@ -580,10 +632,25 @@ export function useAIRunners() {
                 changeIds = [...changeIds, changeId];
               }
             }
-            if (changeIds.length) {
+            if (reviewInFile) {
+              // Diffs are the review; the reload toast already fired. Silence.
+            } else if (result.publishError) {
+              // Backend diagnosed the unwritten turn — surface it verbatim.
+              dispatch({ type: "toast", message: result.publishError });
+            } else if (droppedForNoSummary > 0) {
               dispatch({
                 type: "toast",
-                message: "Chat proposed summary edits — review them on the summary tab",
+                message: "No workspace summary — open the target document and choose “Make summary”, then ask again.",
+              });
+            } else if (proposals.length > 0 && summary && !summary.metadata.path) {
+              dispatch({
+                type: "toast",
+                message: "Summary has no file path — save it as a .docx under the workspace (Save DOCX), then ask again.",
+              });
+            } else if (changeIds.length) {
+              dispatch({
+                type: "toast",
+                message: "Chat proposed summary edits — open the summary document to review them",
               });
             }
 
@@ -602,13 +669,14 @@ export function useAIRunners() {
               documentId,
             };
             dispatch({ type: "chat.append", threadId, message: errMsg });
+            void appendChatMessage(threadId, errMsg);
             finish(id, { status: "error", error: message });
           },
         },
       );
     },
-    [state, start, finish, dispatch, ensureThread],
+    [state, start, finish, dispatch, ensureThread, reloadPublishedSummaries],
   );
 
-  return { runBrowse, runExplain, runIncludeInSummary, runRevise, runRelatedSources, runChat, ensureThread, newThread };
+  return { runBrowse, runExplain, runIncludeInSummary, runRelatedSources, runChat, ensureThread, newThread };
 }

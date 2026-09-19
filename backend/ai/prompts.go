@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"Conductino/backend/models"
+	"Conductino/backend/skills"
 )
 
 // aiResult is the JSON shape sunk in a "done" event's Payload. Keys mirror
@@ -18,6 +19,13 @@ type aiResult struct {
 	Revision       string       `json:"revision,omitempty"`
 	RelatedSources []aiRelated  `json:"relatedSources,omitempty"`
 	Proposals      []aiProposal `json:"proposals,omitempty"`
+	// ToolTrace carries the turn's tool loop for the chat "thinking" view.
+	ToolTrace []aiToolCall `json:"toolTrace,omitempty"`
+	// Published carries summary files written this turn (publish_summary):
+	// the UI reloads each and decorates the diffs in-file.
+	Published []aiPublishedSummary `json:"publishedSummaries,omitempty"`
+	// PublishError explains proposed-but-unwritten turns for the user toast.
+	PublishError string `json:"publishError,omitempty"`
 }
 
 // aiProposal mirrors TS AIProposal: full rewrite power, not append-only.
@@ -32,6 +40,32 @@ type aiProposal struct {
 type aiInsertion struct {
 	Text     string `json:"text"`
 	Citation string `json:"citation"`
+}
+
+// aiToolCall is one entry of the chat "thinking" log: what the tool loop
+// ran, whether it worked, and how long it took. Names + redacted status
+// only — never file content, prompts, or proposal text (plan 02 §5).
+type aiToolCall struct {
+	Tool string `json:"tool"`
+	OK   bool   `json:"ok"`
+	Ms   int64  `json:"ms"`
+}
+
+// aiPublishedDiff is one write-through edit for in-file diff decoration.
+type aiPublishedDiff struct {
+	Op      string `json:"op"`
+	Target  string `json:"target,omitempty"`
+	Text    string `json:"text,omitempty"`
+	OldText string `json:"oldText,omitempty"`
+	Note    string `json:"note,omitempty"`
+}
+
+// aiPublishedSummary tells the UI a summary file changed on disk this turn:
+// reload it and decorate the diffs in-file.
+type aiPublishedSummary struct {
+	SummaryID string            `json:"summaryId"`
+	Path      string            `json:"path"`
+	Diffs     []aiPublishedDiff `json:"diffs,omitempty"`
 }
 
 type aiRelated struct {
@@ -144,6 +178,12 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 			draft = sel
 		}
 		base := "Revise the following draft sentence(s) for clarity and academic tone. Return ONLY the revised text, no commentary:\n\n" + draft
+		// Revise-with-context (plan 11 §3): when the UI names the pending
+		// proposal, the model revises THAT span against the summary snapshot
+		// (appended by withContext) — not a bare sentence in a vacuum.
+		if fb := focusedProposalBlock(req.FocusedChange); fb != "" {
+			base += "\n\n" + fb
+		}
 		return withContext(base, req), kindRevision, tokenBudgetShort
 	case models.OpChat:
 		// Multi-turn: history + current user message (Query or CustomPrompt).
@@ -178,15 +218,7 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 			b.WriteString("\n\n")
 		}
 		if fc := req.FocusedChange; fc != nil && (strings.TrimSpace(fc.NewContent) != "" || strings.TrimSpace(fc.OldContent) != "") {
-			b.WriteString("### Focused pending proposal (the user likely means THIS when they say \"this proposal\", \"shorten it\", \"expand it\")\n")
-			fmt.Fprintf(&b, "(change %s, %s, block %s)\n",
-				strings.TrimSpace(fc.ID), strings.TrimSpace(fc.Op), strings.TrimSpace(fc.BlockID))
-			if strings.TrimSpace(fc.OldContent) != "" {
-				b.WriteString("Before:\n" + strings.TrimSpace(fc.OldContent) + "\n")
-			}
-			b.WriteString("Proposed:\n" + strings.TrimSpace(fc.NewContent) + "\n")
-			b.WriteString("To revise it, emit propose_summary_edit with op=\"modify\" (or \"delete\") targeting that block and the FULL revised text. ")
-			b.WriteString("Do not touch it unless the user asks.\n\n")
+			b.WriteString(focusedProposalBlock(req.FocusedChange))
 		}
 		if hist := formatChatHistory(req.MessageHistory); hist != "" {
 			b.WriteString(hist)
@@ -197,6 +229,88 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 	default:
 		return "", "", 0
 	}
+}
+
+// buildPromptFor is the service entry: pure prompt plus matched skill
+// excerpts (≤2, ~1500 chars total), so tool discipline travels with the
+// request instead of one ever-growing system prompt. No skills loaded →
+// output identical to buildPrompt.
+func (g *GeminiService) buildPromptFor(op models.AIOperation, req models.AIRequest) (string, promptKind, int) {
+	prompt, kind, budget := buildPrompt(op, req)
+	if prompt == "" {
+		return prompt, kind, budget
+	}
+	return g.attachSkills(prompt, op, req), kind, budget
+}
+
+// skillExcerpt is one injectable skill (JSON-serializable for MatchSkills).
+type skillExcerpt struct {
+	Name    string `json:"name"`
+	Excerpt string `json:"excerpt"`
+}
+
+// matchedSkillExcerpts resolves operation+intent to ≤2 capped excerpts.
+func (g *GeminiService) matchedSkillExcerpts(op models.AIOperation, intent string) []skillExcerpt {
+	if g == nil || len(g.skills) == 0 {
+		return nil
+	}
+	matched := skills.Match(g.skills, string(op), intent)
+	var out []skillExcerpt
+	total := 0
+	for i, s := range matched {
+		if i >= 2 {
+			break
+		}
+		cap := 1500
+		if n, ok := s.Budgets["maxChars"]; ok && n > 0 && n < cap {
+			cap = n
+		}
+		ex := skills.Excerpt(s, cap)
+		if i > 0 && total+len(ex) > 1600 {
+			break
+		}
+		out = append(out, skillExcerpt{Name: s.Name, Excerpt: ex})
+		total += len(ex)
+	}
+	return out
+}
+
+// attachSkills appends matched skill excerpts (plan 11 §1). Matching is by
+// operation + user text against each skill's `when`; injection is capped so
+// prompts stay budgeted.
+func (g *GeminiService) attachSkills(base string, op models.AIOperation, req models.AIRequest) string {
+	matched := g.matchedSkillExcerpts(op, strings.TrimSpace(req.Query+" "+req.CustomPrompt))
+	if len(matched) == 0 {
+		return base
+	}
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\n### Working skills (follow the steps; verify each action from its tool result)\n")
+	for _, e := range matched {
+		b.WriteString(e.Excerpt)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// focusedProposalBlock renders the pending proposal a turn likely refers to
+// ("shorten this proposal"). Shared by chat (revise-by-reference) and
+// rewrite (Review revise button). Empty when nothing is focused.
+func focusedProposalBlock(fc *models.FocusedChange) string {
+	if fc == nil || (strings.TrimSpace(fc.NewContent) == "" && strings.TrimSpace(fc.OldContent) == "") {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Focused pending proposal (the user likely means THIS when they say \"this proposal\", \"shorten it\", \"expand it\")\n")
+	fmt.Fprintf(&b, "(change %s, %s, block %s)\n",
+		strings.TrimSpace(fc.ID), strings.TrimSpace(fc.Op), strings.TrimSpace(fc.BlockID))
+	if strings.TrimSpace(fc.OldContent) != "" {
+		b.WriteString("Before:\n" + strings.TrimSpace(fc.OldContent) + "\n")
+	}
+	b.WriteString("Proposed:\n" + strings.TrimSpace(fc.NewContent) + "\n")
+	b.WriteString("To revise it, emit propose_summary_edit with op=\"modify\" (or \"delete\") targeting that block and the FULL revised text. ")
+	b.WriteString("Do not touch it unless the user asks.\n\n")
+	return b.String()
 }
 
 // encodeResult packs raw model text into the "done" payload JSON the TS

@@ -11,6 +11,7 @@
  */
 
 import type { Document, DocumentBlock, ID } from "../types/domain";
+import { buildContextPackRemote } from "../services/backend";
 
 const DEFAULT_WINDOW = 2;
 /** Soft character budget for the whole pack (prompt still has its own token ceiling). */
@@ -106,4 +107,34 @@ export function buildContextPack(
     pack = pack.slice(0, budget - 20) + "\n\n[…truncated…]";
   }
   return pack;
+}
+
+/**
+ * Bridge-first context pack (plan 11 §4): the Go assembler owns the budget
+ * algorithm; the local builder above is the browser-mode fallback (and the
+ * contract the Go port mirrors — keep the two in sync).
+ */
+export async function buildContextPackAsync(
+  doc: Document | undefined,
+  selection?: { blockId: ID; text: string; range?: { start: number; end: number } },
+  opts: ContextPackOpts = {},
+): Promise<string> {
+  if (doc) {
+    try {
+      const remote = await buildContextPackRemote(
+        JSON.stringify({ blocks: doc.blocks }),
+        doc.metadata?.title ?? "",
+        selection?.blockId ?? "",
+        selection?.text ?? "",
+        selection?.range ? selection.range.start : -1,
+        selection?.range ? selection.range.end : -1,
+        opts.windowBlocks ?? 2,
+        opts.includeOutline !== false,
+      );
+      if (remote) return remote;
+    } catch {
+      // Fall through to the local builder.
+    }
+  }
+  return buildContextPack(doc, selection, opts);
 }

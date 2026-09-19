@@ -42,6 +42,8 @@ func EstimateTokens(s string) int {
 // IsRateLimitOrUnavailable classifies errors that should trigger failover.
 // Intentionally broad: free-tier exhaustion often returns varied wording.
 // Lives here (not ai) so parallel providers and budgets share one taxonomy.
+// Auth failures are deliberately EXCLUDED (see IsAuthError): a bad key never
+// heals by failing over, and treating it as transient hides a config fault.
 func IsRateLimitOrUnavailable(err error) bool {
 	if err == nil {
 		return false
@@ -51,13 +53,46 @@ func IsRateLimitOrUnavailable(err error) bool {
 		"429", "rate limit", "rate-limit", "quota", "resource exhausted",
 		"resource_exhausted", "503", "unavailable", "overloaded", "capacity",
 		"too many requests", "limit exceeded", "exceeded your current",
-		"billing", "permission denied", "api key not valid",
 	} {
 		if strings.Contains(s, needle) {
 			return true
 		}
 	}
 	return false
+}
+
+// IsAuthError classifies invalid-key/auth errors, which must surface as
+// "this provider's key is invalid" instead of triggering silent failover.
+// Check this BEFORE IsRateLimitOrUnavailable: some providers word quota and
+// auth failures similarly, and auth must win.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isAuthErrorText(strings.ToLower(err.Error()))
+}
+
+func isAuthErrorText(s string) bool {
+	for _, needle := range []string{
+		"invalid api key", "incorrect api key", "invalid_api_key",
+		"invalid x-api-key", "wrong api key", "api key not valid",
+		"unauthorized", "unauthenticated", "forbidden",
+		"authentication", "permission denied", "invalid credentials",
+		"billing", "account deactivated",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAuthErrorText reports whether raw provider error text (e.g. a response
+// body before it is wrapped) signals an auth failure. Used at the point of
+// error construction so the UI-safe category message preserves the signal
+// without leaking the raw body.
+func IsAuthErrorText(text string) bool {
+	return isAuthErrorText(strings.ToLower(text))
 }
 
 func RecordUsage(provider, operation, class, prompt string, start time.Time, err error) {

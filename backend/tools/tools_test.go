@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"Conductino/backend/extract"
+	"Conductino/backend/mirror"
 	"Conductino/backend/models"
 )
 
@@ -177,5 +179,172 @@ func TestReadSourceTypoSuggests(t *testing.T) {
 	if !strings.Contains(r.Content, "did you mean") ||
 		!strings.Contains(r.Content, "plant_bioenergetics_and_metabolism.docx") {
 		t.Fatalf("no suggestion: %+v", r)
+	}
+}
+
+func TestResolveBasenameOmitsFolder(t *testing.T) {
+	// Users name the file, not the folder: "Summary" must resolve into a
+	// subfolder, and bare names must not match across folders ambiguously.
+	h := &ToolHost{FS: &suggestFS{
+		root: "/tmp/ws",
+		files: []string{
+			"plant_physiology/Plant_Bioenergetics_and_Metabolism.docx",
+			"plant_physiology/Summary.docx",
+		},
+	}, Docs: fakeDocs{}}
+	if got, _ := h.resolveSourcePath("Summary"); got != "plant_physiology/Summary.docx" {
+		t.Fatalf("basename stem: %q", got)
+	}
+	if got, _ := h.resolveSourcePath("Plant_Bioenergetics_and_Metabolism.docx"); got != "plant_physiology/Plant_Bioenergetics_and_Metabolism.docx" {
+		t.Fatalf("basename exact: %q", got)
+	}
+	// Ambiguous basenames suggest instead of guessing.
+	h2 := &ToolHost{FS: &suggestFS{
+		root:  "/tmp/ws",
+		files: []string{"a/Notes.docx", "b/Notes.docx"},
+	}, Docs: fakeDocs{}}
+	if got, sug := h2.resolveSourcePath("Notes"); got != "" || len(sug) != 2 {
+		t.Fatalf("ambiguous: %q %v", got, sug)
+	}
+	// A path naming a folder still matches in full.
+	if got, _ := h.resolveSourcePath("plant_physiology/Summary.docx"); got != "plant_physiology/Summary.docx" {
+		t.Fatalf("full path: %q", got)
+	}
+}
+
+func TestCanPublishGate(t *testing.T) {
+	full := &ToolHost{
+		FS: &fakeFS{root: "/tmp/ws"}, PrimarySummaryID: "s",
+		SummaryPath: "Summary.docx", Mirror: mirror.New(t.TempDir()),
+	}
+	if !full.CanPublish() {
+		t.Fatal("complete host must publish")
+	}
+	for name, h := range map[string]*ToolHost{
+		"nil mirror":   {FS: &fakeFS{root: "/tmp/ws"}, PrimarySummaryID: "s", SummaryPath: "Summary.docx"},
+		"no id":        {FS: &fakeFS{root: "/tmp/ws"}, SummaryPath: "Summary.docx", Mirror: mirror.New(t.TempDir())},
+		"no path":      {FS: &fakeFS{root: "/tmp/ws"}, PrimarySummaryID: "s", Mirror: mirror.New(t.TempDir())},
+		"no fs":        {PrimarySummaryID: "s", SummaryPath: "Summary.docx", Mirror: mirror.New(t.TempDir())},
+		"escape path":  {FS: &fakeFS{root: "/tmp/ws"}, PrimarySummaryID: "s", SummaryPath: "../evil.docx", Mirror: mirror.New(t.TempDir())},
+	} {
+		if h.CanPublish() {
+			t.Fatalf("%s must not publish", name)
+		}
+	}
+	var nilHost *ToolHost
+	if nilHost.CanPublish() {
+		t.Fatal("nil host must not publish")
+	}
+}
+
+func TestReadSummaryMirrorWorkingCopy(t *testing.T) {
+	dir := t.TempDir()
+	h := &ToolHost{SummaryText: "Alpha\n\nBeta", PrimarySummaryID: "sum1", Mirror: mirror.New(dir)}
+	r := h.Dispatch(ToolReadSummary, nil)
+	if !r.OK || !strings.Contains(r.Content, "Alpha") {
+		t.Fatalf("snapshot read: %+v", r)
+	}
+	// Propose mirrors into the working copy…
+	p := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "insert", "text": "Gamma claim"})
+	if !p.OK || !strings.Contains(p.Content, "Mirror working copy updated") {
+		t.Fatalf("propose mirror: %+v", p)
+	}
+	// …so the next read composes snapshot + applied edit.
+	r2 := h.Dispatch(ToolReadSummary, nil)
+	if !r2.OK || !strings.Contains(r2.Content, "Gamma claim") || !strings.Contains(r2.Content, "working copy") {
+		t.Fatalf("mirror read: %+v", r2)
+	}
+	if !strings.Contains(r2.Content, "edits applied this session") {
+		t.Fatalf("op log missing: %+v", r2)
+	}
+	// User saves (snapshot moves) → mirror re-syncs, edit log kept.
+	h.SummaryText = "Alpha\n\nBeta\n\nUser rewrite"
+	r3 := h.Dispatch(ToolReadSummary, nil)
+	if !r3.OK || !strings.Contains(r3.Content, "User rewrite") || strings.Contains(r3.Content, "Gamma claim") {
+		t.Fatalf("resync: %+v", r3)
+	}
+}
+
+func TestProposalsAccumulateAcrossCalls(t *testing.T) {
+	h := &ToolHost{PrimarySummaryID: "s"}
+	for _, text := range []string{"claim one", "claim two", "claim three"} {
+		if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "insert", "text": text}); !r.OK {
+			t.Fatalf("propose: %+v", r)
+		}
+	}
+	got := h.Proposals()
+	if len(got) != 3 || got[0].NewText != "claim one" || got[2].NewText != "claim three" {
+		t.Fatalf("accumulate: %+v", got)
+	}
+	if h.LastProposal().NewText != "claim three" {
+		t.Fatal("LastProposal must stay the latest")
+	}
+	var nilHost *ToolHost
+	if nilHost.Proposals() != nil {
+		t.Fatal("nil host must yield nil")
+	}
+}
+
+func TestPublishSummaryWritesDocx(t *testing.T) {
+	dir := t.TempDir()
+	mdir := t.TempDir()
+	h := &ToolHost{
+		FS: &fakeFS{root: dir}, Docs: fakeDocs{},
+		SummaryText: "Alpha claim.", PrimarySummaryID: "sum1",
+		SummaryPath: "Summary.docx", Mirror: mirror.New(mdir),
+	}
+	if r := h.Dispatch(ToolProposeSummaryEdit, map[string]string{"op": "insert", "text": "Beta claim"}); !r.OK {
+		t.Fatalf("propose: %+v", r)
+	}
+	r := h.Dispatch(ToolPublishSummary, nil)
+	if !r.OK {
+		t.Fatalf("publish: %+v", r)
+	}
+	if !strings.Contains(r.Content, "Summary.docx") {
+		t.Fatalf("report: %+v", r)
+	}
+	// The .docx on disk re-extracts with snapshot + proposal content.
+	d := extract.NewDocuments()
+	opened, err := d.OpenFile(filepath.Join(dir, "Summary.docx"), "Summary.docx")
+	if err != nil || opened.Reason != "" {
+		t.Fatalf("reopen: %+v %v", opened, err)
+	}
+	if plain := blocksJSONToPlain(opened.BlocksJSON); !strings.Contains(plain, "Alpha") || !strings.Contains(plain, "Beta") {
+		t.Fatalf("round trip: %q", plain)
+	}
+	// Diffs recorded for in-file decoration.
+	pubs := h.PublishedDocs()
+	if len(pubs) != 1 || pubs[0].Path != "Summary.docx" || len(pubs[0].Diffs) != 1 {
+		t.Fatalf("published: %+v", pubs)
+	}
+	if pubs[0].Diffs[0].Text == "" || pubs[0].Diffs[0].Op != "insert" {
+		t.Fatalf("diff: %+v", pubs[0].Diffs)
+	}
+	// No path → honest error, nothing written.
+	h2 := &ToolHost{Mirror: mirror.New(t.TempDir()), PrimarySummaryID: "s", SummaryText: "x"}
+	if r := h2.Dispatch(ToolPublishSummary, nil); r.OK {
+		t.Fatalf("pathless publish must fail: %+v", r)
+	}
+	// Second publish with no new ops → still OK, zero diffs.
+	r2 := h.Dispatch(ToolPublishSummary, nil)
+	if !r2.OK {
+		t.Fatalf("republish: %+v", r2)
+	}
+	if got := h.PublishedDocs(); len(got) != 2 || len(got[1].Diffs) != 0 {
+		t.Fatalf("republish diffs: %+v", got)
+	}
+}
+
+func TestReadSummaryEmptyIsValid(t *testing.T) {
+	dir := t.TempDir()
+	h := &ToolHost{PrimarySummaryID: "blank", Mirror: mirror.New(dir)}
+	r := h.Dispatch(ToolReadSummary, nil)
+	if !r.OK || !strings.Contains(r.Content, "empty") {
+		t.Fatalf("empty summary must be OK: %+v", r)
+	}
+	// No id and no snapshot → honest error (nothing to read).
+	h2 := &ToolHost{}
+	if r := h2.Dispatch(ToolReadSummary, nil); r.OK {
+		t.Fatalf("id-less blank should fail: %+v", r)
 	}
 }

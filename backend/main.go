@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/extract"
+	"Conductino/backend/mirror"
 	"Conductino/backend/models"
 	"Conductino/backend/services"
 )
@@ -46,7 +48,30 @@ func (b *Backend) Init(ctx context.Context) error {
 	if root, ok := b.storage.GetSetting("last_library_root"); ok && root != "" {
 		b.work.SetLibraryRoot(root)
 	}
+	// Scratch-mirror hygiene (plan 10 §2): drop mirrors untouched for 7 days.
+	// Best-effort — a failure here must never block startup.
+	_ = mirror.New(mirror.DefaultDir()).Sweep(7 * 24 * time.Hour)
 	return nil
+}
+
+// BuildContextPack assembles a budgeted context string server-side
+// (plan 11 §4: budgeting moves behind an API; the UI keeps rendering).
+func (b *Backend) BuildContextPack(blocksJSON, title, blockID, selText string, rangeStart, rangeEnd, windowBlocks int, includeOutline bool) (string, error) {
+	return extract.BuildContextPack(blocksJSON, extract.PackOpts{
+		Title: title, BlockID: blockID, SelText: selText,
+		RangeStart: rangeStart, RangeEnd: rangeEnd,
+		WindowBlocks: windowBlocks, IncludeOutline: includeOutline,
+	})
+}
+
+// MatchSkills returns skill excerpts for an operation+intent as JSON
+// (plan 11 §1). Empty array when nothing matches or AI is unconfigured.
+func (b *Backend) MatchSkills(operation, intent string) (string, error) {
+	type matcher interface{ MatchedSkills(string, string) string }
+	if m, ok := b.ai.(matcher); ok && m != nil {
+		return m.MatchedSkills(operation, intent), nil
+	}
+	return "[]", nil
 }
 
 func (b *Backend) ListTree(_ context.Context) ([]models.FileTreeNode, error) {

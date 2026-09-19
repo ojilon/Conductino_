@@ -114,24 +114,53 @@ Each phase should leave the app shippable (no broken reader).
 ## Phase 16 — Unified chat + live library + empty docs (09 + 10 §1; landed)
 
 - [x] One chat per workspace (`ensureThread` matches workspace only) + New chat button
+- [x] Thread persistence (save/append best-effort) + history load on folder switch + switcher UI
+- [x] Thinking trace (timed dispatches → payload → SQLite column → expandable chat UI)
+- [x] Make-summary designation (kind flip + primary persist) + no-summary guidance toast
+- [x] Tool budgets raised (4 rounds, 8 calls/turn, 4/round)
 - [x] Empty files open as blank pages (`extract.emptyDocument`, tested)
 - [x] Library refresh on window focus + open focuses existing tab (path+root match)
 - [x] Skills loader + `summarize-source` starter (`backend/skills/`)
-- [ ] Thread history load from SQLite on workspace switch
-- [ ] Minimal thread switcher (title + updatedAt)
 
-## Phase 17 — Intermediates + canvas + edit loop (10 §§2–3 + 11 §3)
+## Phase 17 — Intermediates + canvas + edit loop (10 §§2–3 + 11 §3; landed)
 
-- [ ] `backend/.work/` temp mirrors + mirror-aware read_summary/propose + accept path
-- [ ] Page canvas renderer for docx/md/txt (pdf stays pdf.js); empty doc = one empty page
-- [ ] Revise-with-context loop + optional accept notification to the thread
+- [x] `backend/.work/` temp mirrors + mirror-aware read_summary/propose + mtime re-sync accept path
+- [x] Real `extract.NormalizeBlocksJSON` (+ page map) backing mirrors
+- [x] Page canvas renderer for docx/md/txt (`paginateBlocks`; pdf stays pdf.js); empty doc = one empty page
+- [x] Revise-with-context loop (`focusedChange` + summary snapshot both ends; shared `focusedProposalBlock`)
+- [ ] Custom-instruction revise input in Review UI
+- [ ] Accept notification to the thread (system note)
 
-## Phase 18 — Skills wiring + workflow runner (11 §§1–2)
+## Phase 18 — Skills wiring + workflow runner (11 §§1–2; landed)
 
-- [ ] Prompt wiring (≤2 skill excerpts at prompt build) + starters (revise-proposal, find-in-workspace, quota-aware) + workspace/user layers
-- [ ] `backend/workflows/` runner (gated routines, checkpoints, idempotent steps)
+- [x] Prompt wiring (≤2 skill excerpts at prompt build; byte-identical with no skills) + `App.MatchSkills`
+- [x] `backend/workflows/` runner + `run_workflow` tool (read-only v1) + schema parity
+- [x] `add-to-summary` workflow (deterministic read→propose loop) + multi-proposal surfacing per turn
+- [x] Intent-phrase skill routing + skill v2 autonomous fast path
+- [ ] Starters (revise-proposal, find-in-workspace, quota-aware) + workspace/user layers
+- [ ] Propose-capable workflows + (thread, step) idempotency ledger
 
-## Phase 19 — Frontend simplification + backend async APIs (11 §§4–5)
+## Phase 19 — Frontend simplification + backend async APIs (11 §§4–5; partially landed)
 
-- [ ] Move context-pack assembly, skill matching, history load behind `App.*` APIs
+- [x] Context-pack assembly behind `App.BuildContextPack` (bridge-first, local fallback; Go parity test)
+- [x] Chat history behind `App.ListThreads/ListMessages` (were bound, never called)
+- [ ] Skill matching UI (API landed) + structured usage meters
 - [ ] Keep non-network packages stdlib-only (allowlist: sqlite, ledongthuc/pdf); dep check in CI spirit
+
+## Phase 20 — Live publish + in-file diff review (landed)
+
+- [x] `publish_summary` tool (mirror → blocks → mapped `.docx`, Resolve-jailed; honest errors)
+- [x] `BlocksFromMarkdown` (stable IDs; page markers skipped) + mirror op pre-images + unpublished watermark
+- [x] Auto-reload on publish payload (`doc.blocks.replace` + `doc.diffs.set`, editor-refresh semantics)
+- [x] Auto-publish safety net (proposed-but-unpublished turns write through; traced + audited)
+- [x] In-file diff decorations + Accept/Reject/instruction→AI (was Slate popover; now canvas menu)
+- [x] Old approval path removed (Review face, `runRevise`, `change.revise`, InsertCard, pending decorations)
+- [x] Slate removed (editor + adapter deleted; bundle −200 kB): `DocxCanvas` direct editing
+- [x] Make-summary designation (was dead actions) + no-summary guidance + `summaryPath` wire
+- [x] Skill v3 publish discipline ("write through, then report")
+- [x] Save-to-same-file (open path passed; no more `summaries/` copies) + Wails menu suppression on pages
+- [x] Plaintext canvas editing (rich paste as plain paragraphs) + commit paragraph-splitting
+- [x] publishError payload → exact-fix toasts for unwritten turns
+- [x] Basename path resolution into subfolders (ambiguous → suggest)
+- [ ] Backspace-merge across blocks in canvas
+- [ ] Backend-owned threads flip — EXPLICITLY DEFERRED (thread archive works; edit loop owns priority)

@@ -17,7 +17,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,7 +27,10 @@ import (
 	"time"
 
 	"Conductino/backend/models"
+	"Conductino/backend/mirror"
+	"Conductino/backend/skills"
 	"Conductino/backend/usage"
+	"Conductino/backend/workflows"
 )
 
 // EventSink receives one streaming unit of an AI operation.
@@ -67,6 +72,16 @@ type GeminiService struct {
 	secondary []ModelBackend
 	mode      string // single | failover | dual | auto
 	primary   string // gemini | groq | openrouter (AI_PRIMARY)
+	// Bundled instruction skills (plan 11): matched per operation and
+	// injected as excerpts at prompt build. Empty when the skills dir is
+	// absent (tests, minimal installs) — prompts are unchanged then.
+	skills []skills.Skill
+	// Summary mirror store (plan 10 §2): .md working copies under
+	// backend/.work/summaries. Nil when the dir is unusable — tools
+	// degrade to snapshot-only.
+	mirror *mirror.Store
+	// Workflow runner (plan 11 §2): read-only routines for the chat loop.
+	workflows *workflows.Runner
 }
 
 // New builds the backend AI service, loading the key once at startup.
@@ -81,7 +96,49 @@ func New() *GeminiService {
 		primary: loadAIPrimary(),
 	}
 	g.secondary = loadSecondaryBackends()
+	g.skills = loadBundledSkills()
+	g.mirror = mirror.New(mirror.DefaultDir())
+	g.workflows = workflows.NewRunner()
+	// One-time startup diagnostic (values never logged): when a provider
+	// shows Configured()==false despite a key in backend/.ai.env, the
+	// source column tells whether the process saw a different cwd
+	// (relative dotenv paths miss), a nearer shadowing file, or a
+	// malformed line. Keys load once here — editing .ai.env requires an
+	// app restart.
+	cwd, _ := os.Getwd()
+	var groqOK, openrouterOK bool
+	for _, b := range g.secondary {
+		switch b.Name() {
+		case "groq":
+			groqOK = b.Configured()
+		case "openrouter":
+			openrouterOK = b.Configured()
+		}
+	}
+	log.Printf("[ai] config: cwd=%s mode=%s primary=%s gemini=%v(%s) groq=%v(%s) openrouter=%v(%s)",
+		cwd, g.mode, g.primary,
+		g.ConfiguredPrimary(), keySource("GEMINI_API_KEY"),
+		groqOK, keySource("GROQ_API_KEY"),
+		openrouterOK, keySource("OPENROUTER_API_KEY"))
 	return g
+}
+
+// loadBundledSkills reads versioned instruction skills (plan 11 §1).
+// Best-effort: a missing/unreadable dir yields no skills and prompts stay
+// exactly as before. Candidates cover `wails dev` / `go test` (repo-root
+// cwd) and installed binaries (skills beside the executable).
+func loadBundledSkills() []skills.Skill {
+	var dirs []string
+	dirs = append(dirs, "backend/skills")
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "skills"))
+	}
+	for _, d := range dirs {
+		if sk, err := skills.LoadDir(d); err == nil && len(sk) > 0 {
+			return sk
+		}
+	}
+	return nil
 }
 
 func loadSecondaryBackends() []ModelBackend {
@@ -101,6 +158,21 @@ func NewWithTools(fs PathResolver, docs FileOpener) *GeminiService {
 	g.fs = fs
 	g.docs = docs
 	return g
+}
+
+// MatchedSkills returns skill excerpts for an operation+intent as JSON
+// [{name, excerpt}] (plan 11 §1: future Skills UI, debugging). Empty array
+// when nothing matches — never an error.
+func (g *GeminiService) MatchedSkills(operation, intent string) string {
+	excerpts := g.matchedSkillExcerpts(models.AIOperation(operation), intent)
+	if len(excerpts) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(excerpts)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // ProviderName is shown in the Settings dialog.
@@ -212,15 +284,21 @@ func (g *GeminiService) generateWithFailover(
 			if emitPhase != nil {
 				emitPhase("Using " + b.Name() + "…")
 			}
-			text, err := b.Generate(ctx, prompt, maxTokens)
-			if err == nil {
-				return text, b.Name(), nil
-			}
-			if localFirst == nil {
-				localFirst = err
-			} else {
-				localFirst = fmt.Errorf("%v; %s: %v", localFirst, b.Name(), err)
-			}
+		text, err := b.Generate(ctx, prompt, maxTokens)
+		if err == nil {
+			return text, b.Name(), nil
+		}
+		// Auth failure is deterministic config breakage, not a transient
+		// outage: abort the chain with the named key error instead of
+		// silently burning quota on the next provider.
+		if isAuthError(err) {
+			return "", "", err
+		}
+		if localFirst == nil {
+			localFirst = err
+		} else {
+			localFirst = fmt.Errorf("%v; %s: %v", localFirst, b.Name(), err)
+		}
 		}
 		if localFirst != nil {
 			return "", "", localFirst
@@ -233,6 +311,11 @@ func (g *GeminiService) generateWithFailover(
 		text, name, err := trySecondary(g.primary)
 		if err == nil {
 			return text, name, nil
+		}
+		// The preferred backend's key is invalid: surface it, don't launder
+		// the turn through other providers' quota.
+		if isAuthError(err) {
+			return "", "", err
 		}
 		firstErr = err
 		// Fall through: try other secondaries, then Gemini, unless single-mode.
@@ -248,17 +331,20 @@ func (g *GeminiService) generateWithFailover(
 				if emitPhase != nil {
 					emitPhase("Secondary failed — trying gemini…")
 				}
-				text, err = tryGemini()
-				if err == nil {
-					return text, "gemini", nil
-				}
-				firstErr = fmt.Errorf("%v; gemini: %v", firstErr, err)
+			text, err = tryGemini()
+			if err == nil {
+				return text, "gemini", nil
 			}
+			if isAuthError(err) {
+				return "", "", err
+			}
+			firstErr = fmt.Errorf("%v; gemini: %v", firstErr, err)
 		}
-		if firstErr != nil {
-			return "", "", firstErr
-		}
-		return "", "", fmt.Errorf("AI key missing — add GROQ_API_KEY or GEMINI_API_KEY to .ai.env / backend/.ai.env and restart.")
+	}
+	if firstErr != nil {
+		return "", "", firstErr
+	}
+	return "", "", fmt.Errorf("AI key missing — add GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY to .ai.env / backend/.ai.env and restart.")
 	}
 
 	// Default: Gemini first, then secondaries.
@@ -266,6 +352,11 @@ func (g *GeminiService) generateWithFailover(
 		text, err := tryGemini()
 		if err == nil {
 			return text, "gemini", nil
+		}
+		// Gemini's key is invalid: surface it, don't launder the turn
+		// through secondary quota.
+		if isAuthError(err) {
+			return "", "", err
 		}
 		firstErr = err
 	// Failover/auto: try secondary on any failure when a secondary exists.
@@ -303,7 +394,7 @@ func (g *GeminiService) generateWithFailover(
 	if firstErr != nil {
 		return "", "", firstErr
 	}
-	return "", "", fmt.Errorf("AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to .ai.env / backend/.ai.env and restart.")
+	return "", "", fmt.Errorf("AI key missing — add GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY to .ai.env / backend/.ai.env and restart.")
 }
 
 // resolveAPIKey finds the Gemini key without ever hard-coding it. Precedence:
@@ -371,7 +462,7 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 		sink(ev)
 	}
 	if !g.Configured() {
-		emit(models.AIEvent{Type: "error", Message: "AI key missing — add GEMINI_API_KEY or GROQ_API_KEY to backend/.ai.env and restart the app."})
+		emit(models.AIEvent{Type: "error", Message: "AI key missing — add GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY to backend/.ai.env and restart the app."})
 		return
 	}
 	op := models.AIOperation(strings.ToUpper(strings.TrimSpace(req.Operation)))
@@ -389,12 +480,15 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 			Docs:             g.docs,
 			SummaryText:      req.SummaryContent,
 			PrimarySummaryID: req.PrimarySummaryID,
+			SummaryPath:      req.SummaryPath,
+			Mirror:           g.mirror,
+			Workflow:         g.workflows,
 		}
 		g.runChatWithTools(ctx, req, host, emit)
 		return
 	}
 
-	prompt, kind, maxTokens := buildPrompt(op, req)
+	prompt, kind, maxTokens := g.buildPromptFor(op, req)
 	if prompt == "" {
 		emit(models.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
 		return

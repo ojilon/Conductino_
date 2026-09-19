@@ -10,6 +10,10 @@ export function AppendChatMessage(arg1) {
   return window['go']['frontend']['App']['AppendChatMessage'](arg1);
 }
 
+export function BuildContextPack(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['frontend']['App']['BuildContextPack'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function LibraryRoot() {
   return window['go']['frontend']['App']['LibraryRoot']();
 }
@@ -48,6 +52,10 @@ export function LoadPrimarySummary(arg1) {
 
 export function LoadThread(arg1) {
   return window['go']['frontend']['App']['LoadThread'](arg1);
+}
+
+export function MatchSkills(arg1, arg2) {
+  return window['go']['frontend']['App']['MatchSkills'](arg1, arg2);
 }
 
 export function OpenFile(arg1) {

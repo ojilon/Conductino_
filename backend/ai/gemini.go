@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+
+	"Conductino/backend/usage"
 )
 
 // geminiEndpoint is the generateContent REST path; %s is the model name.
@@ -100,11 +103,12 @@ func (g *GeminiService) generate(ctx context.Context, prompt string, maxTokens i
 		return "", fmt.Errorf("AI response was not understood (status %d).", resp.StatusCode)
 	}
 	if resp.StatusCode == 429 {
-		detail := "rate limited"
+		// UI gets the category only; the raw body (quota numbers, links,
+		// org IDs) goes to the server log for debugging.
 		if decoded.Error != nil && strings.TrimSpace(decoded.Error.Message) != "" {
-			detail = strings.TrimSpace(decoded.Error.Message)
+			log.Printf("[ai] gemini 429 detail: %s", truncateRunes(strings.TrimSpace(decoded.Error.Message), 500))
 		}
-		return "", fmt.Errorf("429 rate limit (gemini): %s", truncateRunes(detail, 200))
+		return "", fmt.Errorf("429 rate limit (gemini).")
 	}
 	if resp.StatusCode >= 500 {
 		return "", fmt.Errorf("503 unavailable (gemini, status %d)", resp.StatusCode)
@@ -114,11 +118,19 @@ func (g *GeminiService) generate(ctx context.Context, prompt string, maxTokens i
 		if detail == "" {
 			detail = fmt.Sprintf("status %d", decoded.Error.Code)
 		}
+		// Bad key (Gemini answers 400 "API key not valid") must stay
+		// matchable as auth AFTER the raw body is dropped — classify first.
+		if decoded.Error.Code == 401 || decoded.Error.Code == 403 || usage.IsAuthErrorText(detail) {
+			log.Printf("[ai] gemini auth failure (code %d): %s", decoded.Error.Code, truncateRunes(detail, 300))
+			return "", fmt.Errorf("gemini: invalid API key — check GEMINI_API_KEY.")
+		}
 		low := strings.ToLower(detail)
 		if strings.Contains(low, "quota") || strings.Contains(low, "rate") || strings.Contains(low, "resource exhausted") {
-			return "", fmt.Errorf("429 rate limit (gemini): %s", truncateRunes(detail, 200))
+			log.Printf("[ai] gemini quota detail: %s", truncateRunes(detail, 500))
+			return "", fmt.Errorf("429 rate limit (gemini).")
 		}
-		return "", fmt.Errorf("AI unavailable now: %s", truncateRunes(detail, 220))
+		log.Printf("[ai] gemini error (code %d, status %d): %s", decoded.Error.Code, resp.StatusCode, truncateRunes(detail, 500))
+		return "", fmt.Errorf("AI unavailable now.")
 	}
 	var sb strings.Builder
 	cutOff := false

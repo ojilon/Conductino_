@@ -38,6 +38,8 @@ const (
 	ToolReadSummary        = tools.ToolReadSummary
 	ToolProposeSummaryEdit = tools.ToolProposeSummaryEdit
 	ToolSearchWorkspace    = tools.ToolSearchWorkspace
+	ToolRunWorkflow        = tools.ToolRunWorkflow
+	ToolPublishSummary     = tools.ToolPublishSummary
 )
 
 // ToolCatalog returns the system description of available tools.

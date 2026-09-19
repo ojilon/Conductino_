@@ -1,4 +1,4 @@
-import type { ID } from "../types/domain";
+import type { DocumentBlock, ID } from "../types/domain";
 
 let counter = 0;
 
@@ -51,4 +51,24 @@ export function normalizeRoot(root: string): string {
 export function isStaleRoot(docRoot: string | undefined | null, currentRoot: string | undefined | null): boolean {
   if (!docRoot || !currentRoot) return false;
   return normalizeRoot(docRoot) !== normalizeRoot(currentRoot);
+}
+
+/**
+ * Decode extractor wire JSON ({blocks:[...]}) into blocks, coercing Go nil
+ * slices (JSON null) to arrays so every consumer sees arrays. Null when the
+ * shape is unusable — callers report an honest error, never a placeholder.
+ */
+export function parseBlocksWire(blocksJSON: string): DocumentBlock[] | null {
+  try {
+    const parsed: unknown = JSON.parse(blocksJSON);
+    const raw = (parsed as { blocks: DocumentBlock[] }).blocks;
+    if (!Array.isArray(raw)) return null;
+    return raw.map((b) => ({
+      ...b,
+      segments: Array.isArray(b.segments) ? b.segments : [],
+      listItems: b.type === "list" && Array.isArray(b.listItems) ? b.listItems : b.listItems,
+    }));
+  } catch {
+    return null;
+  }
 }

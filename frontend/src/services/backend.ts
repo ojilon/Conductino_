@@ -15,7 +15,7 @@
  * See docs/architecture.md §"React ↔ Go" and backend/README.md.
  */
 
-import type { FileTreeNode } from "../types/domain";
+import type { ChatMessage, ChatThread, FileTreeNode } from "../types/domain";
 
 /**
  * Wails-bound Go shell (frontend/app.go, generated at runtime — NOT a build
@@ -35,6 +35,48 @@ interface WailsApp {
   AIMeters(): Promise<string>;
   /** Raw workspace bytes (base64) for renderers needing originals (PDF canvas). */
   ReadRawFile(path: string): Promise<string>;
+  /** Server-side budgeted context assembly (plan 11 §4). */
+  BuildContextPack(
+    blocksJSON: string,
+    title: string,
+    blockId: string,
+    selText: string,
+    rangeStart: number,
+    rangeEnd: number,
+    windowBlocks: number,
+    includeOutline: boolean,
+  ): Promise<string>;
+  /** Skill excerpts for an operation+intent, as JSON [{name, excerpt}]. */
+  MatchSkills(operation: string, intent: string): Promise<string>;
+  /** Chat thread persistence (SQLite in desktop, no-op without bridge). */
+  SaveThread(t: ChatThreadDTO): Promise<void>;
+  AppendChatMessage(m: ChatMessageDTO): Promise<void>;
+  /** Map a document as the workspace primary summary (SQLite, desktop). */
+  SetPrimarySummary(summaryId: string): Promise<void>;
+  LoadThread(id: string): Promise<ChatThreadDTO | null>;
+  ListThreads(workspaceId: string): Promise<ChatThreadDTO[]>;
+  ListMessages(threadId: string): Promise<ChatMessageDTO[]>;
+}
+
+/** Wire shapes of Go persistence records (models/storage.go). */
+export interface ChatThreadDTO {
+  id: string;
+  workspaceId: string;
+  documentId?: string;
+  title?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ChatMessageDTO {
+  id: string;
+  threadId: string;
+  role: string;
+  content: string;
+  documentId?: string;
+  /** JSON [{tool, ok, ms}] thinking log (assistant turns that ran tools). */
+  toolTrace?: string;
+  createdAt?: number;
 }
 
 declare global {
@@ -295,4 +337,173 @@ export async function openRawFile(path: string): Promise<Uint8Array | null> {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/**
+ * Server-side context pack (plan 11 §4). Bridge-first; null without the
+ * desktop bridge (callers fall back to the local builder).
+ */
+export async function buildContextPackRemote(
+  blocksJSON: string,
+  title: string,
+  blockId: string,
+  selText: string,
+  rangeStart: number,
+  rangeEnd: number,
+  windowBlocks = 2,
+  includeOutline = true,
+): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.BuildContextPack !== "function") return null;
+  try {
+    const pack = await app.BuildContextPack(
+      blocksJSON,
+      title,
+      blockId,
+      selText,
+      rangeStart,
+      rangeEnd,
+      windowBlocks,
+      includeOutline,
+    );
+    return pack?.trim() ? pack : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Skill excerpts for an operation+intent (plan 11 §1: future Skills UI,
+ * debugging). Empty array without the bridge or when nothing matches.
+ */
+export async function matchSkills(operation: string, intent: string): Promise<{ name: string; excerpt: string }[]> {
+  const app = wailsApp();
+  if (!app || typeof app.MatchSkills !== "function") return [];
+  try {
+    const raw = await app.MatchSkills(operation, intent);
+    const parsed: unknown = JSON.parse(raw || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is { name: string; excerpt: string } =>
+        !!e && typeof (e as { name?: unknown }).name === "string" && typeof (e as { excerpt?: unknown }).excerpt === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat thread persistence (SQLite in desktop; silent no-op in browser) */
+/* ------------------------------------------------------------------ */
+
+function toThreadDTO(t: ChatThread): ChatThreadDTO {
+  return {
+    id: t.id,
+    workspaceId: t.workspaceId,
+    documentId: t.documentId,
+    title: t.title,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
+
+function toMessageDTO(threadId: string, m: ChatMessage): ChatMessageDTO {
+  return {
+    id: m.id,
+    threadId,
+    role: m.role,
+    content: m.content,
+    documentId: m.documentId,
+    toolTrace: m.toolTrace?.length ? JSON.stringify(m.toolTrace) : undefined,
+    createdAt: m.createdAt,
+  };
+}
+
+function fromMessageDTO(m: ChatMessageDTO): ChatMessage {
+  let toolTrace: ChatMessage["toolTrace"];
+  if (m.toolTrace) {
+    try {
+      const parsed: unknown = JSON.parse(m.toolTrace);
+      if (Array.isArray(parsed)) {
+        toolTrace = parsed.filter(
+          (e): e is NonNullable<ChatMessage["toolTrace"]>[number] =>
+            !!e &&
+            typeof (e as { tool?: unknown }).tool === "string" &&
+            typeof (e as { ok?: unknown }).ok === "boolean" &&
+            typeof (e as { ms?: unknown }).ms === "number",
+        );
+      }
+    } catch {
+      toolTrace = undefined;
+    }
+  }
+  return {
+    id: m.id,
+    role: m.role as ChatMessage["role"],
+    content: m.content,
+    createdAt: m.createdAt ?? Date.now(),
+    documentId: m.documentId,
+    toolTrace,
+  };
+}
+
+/** Persist a thread (upsert). False without the bridge or on error. */
+export async function saveChatThread(t: ChatThread): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.SaveThread !== "function") return false;
+  try {
+    await app.SaveThread(toThreadDTO(t));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Map a document as the workspace primary summary (desktop SQLite). */
+export async function setPrimarySummary(summaryId: string): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.SetPrimarySummary !== "function") return false;
+  try {
+    await app.SetPrimarySummary(summaryId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Append one message. False without the bridge or on error. */
+export async function appendChatMessage(threadId: string, m: ChatMessage): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.AppendChatMessage !== "function") return false;
+  try {
+    await app.AppendChatMessage(toMessageDTO(threadId, m));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Load all threads of a workspace with their messages (desktop only). */
+export async function loadWorkspaceThreads(workspaceId: string): Promise<ChatThread[]> {
+  const app = wailsApp();
+  if (!app || typeof app.ListThreads !== "function" || typeof app.ListMessages !== "function") return [];
+  try {
+    const dtos = (await app.ListThreads(workspaceId)) ?? [];
+    const out: ChatThread[] = [];
+    for (const d of dtos) {
+      const msgs = (await app.ListMessages(d.id)) ?? [];
+      out.push({
+        id: d.id,
+        workspaceId: d.workspaceId,
+        documentId: d.documentId,
+        title: d.title ?? "Research chat",
+        messages: msgs.map(fromMessageDTO),
+        createdAt: d.createdAt ?? Date.now(),
+        updatedAt: d.updatedAt ?? Date.now(),
+      });
+    }
+    return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
 }

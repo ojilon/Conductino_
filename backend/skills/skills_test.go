@@ -16,16 +16,16 @@ func TestParseStarterSkill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Name != "summarize-source" || s.Version != 1 {
+	if s.Name != "summarize-source" || s.Version != 3 {
 		t.Fatalf("identity: %+v", s)
 	}
-	if len(s.Tools) != 4 || s.Tools[0] != "list_workspace" {
+	if len(s.Tools) != 6 || s.Tools[0] != "run_workflow" || s.Tools[5] != "publish_summary" {
 		t.Fatalf("tools: %v", s.Tools)
 	}
-	if s.Budgets["maxToolCalls"] != 6 || s.Budgets["maxChars"] != 6000 {
+	if s.Budgets["maxToolCalls"] != 8 || s.Budgets["maxChars"] != 6000 {
 		t.Fatalf("budgets: %v", s.Budgets)
 	}
-	if !strings.Contains(s.Body, "never claim success") {
+	if !strings.Contains(s.Body, "claim success") {
 		t.Fatalf("body lost verification rule")
 	}
 }
@@ -70,5 +70,15 @@ func TestLoadDirAndMatch(t *testing.T) {
 	ex := Excerpt(got[0], 4)
 	if !strings.HasPrefix(ex, "## Skill: a\n") || !strings.HasSuffix(ex, "…[truncated]") {
 		t.Fatalf("excerpt: %q", ex)
+	}
+}
+
+func TestMatchIntentPhrase(t *testing.T) {
+	got := []Skill{{Name: "s", When: []string{"add to summary"}}}
+	if m := Match(got, "", "please add to summary the introduction"); len(m) != 1 {
+		t.Fatalf("intent phrase: %+v", m)
+	}
+	if m := Match(got, "", "what is photosynthesis"); len(m) != 0 {
+		t.Fatalf("intent negative: %+v", m)
 	}
 }

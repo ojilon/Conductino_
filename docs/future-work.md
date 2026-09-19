@@ -21,10 +21,13 @@
 | AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
 | Selection → AI action workflow | **WORKING** (block anchor + range offsets) | `DocumentView.tsx` |
 | Highlights / saved notes | **WORKING** (block-anchored; range-precise spans where measured) | `doc.highlight.add` |
-| Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based; gated autosave to DOCX) | `SummaryDocumentView.tsx` |
+| Summary document editing | **WORKING** (direct paginated canvas; blur-commit + Enter-split; gated autosave to DOCX) | `SummaryDocumentView.tsx` (`DocxCanvas`) |
 | AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING** (tool + chat driven; user gatekeeps every change) | `change.*` actions |
 | Chat `@doc` targeting + region selection | **WORKING** (`mentionIds` + selection anchor; autocomplete in composer) | `state/mentions.ts`, `aiController.runChat` |
-| Unified workspace chat (one thread per folder + New chat) | **WORKING** (thread identity = workspaceId; history load + switcher pending) | `aiController.ensureThread/newThread`, `AIReadingPanel.tsx`, `docs/plans/09-unified-workspace-chat.md` |
+| Unified workspace chat (one thread per folder + New chat) | **WORKING** (thread identity = workspaceId) | `aiController.ensureThread/newThread`, `AIReadingPanel.tsx`, `docs/plans/09-unified-workspace-chat.md` |
+| Chat thread persistence + history load + switcher | **WORKING in desktop** (best-effort save/append; SQLite load on folder switch) | `backend.ts` chat helpers, `ReaderMode.pickFolder` |
+| Chat thinking trace (expandable tool log per turn) | **WORKING** (timed dispatches; persisted `tool_trace` column with migration) | `ai/chat.go`, `AIReadingPanel.tsx` |
+| Workspace summary designation | **WORKING** (Make-summary button flips kind + persists primary) | `DocumentView.tsx`, `reduceWorkspace.ts` |
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
@@ -33,8 +36,11 @@
 | Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
-| Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx`, `slateAdapter.ts` |
-| Skills / workflows / parallel APIs | **PARTIAL** (loader + `summarize-source` starter landed; prompt wiring + runner planned) | `backend/skills/`, `docs/plans/11-skills-workflows-and-split.md` (was `08` §§1–3) |
+| Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx` |
+| Skills / workflows / parallel APIs | **PARTIAL** (loader + `summarize-source` starter + prompt wiring + `workflows/` runner with `run_workflow` landed; more starters + ledger planned) | `backend/skills/`, `backend/workflows/`, `docs/plans/11-skills-workflows-and-split.md` (was `08` §§1–3) |
+| Summary mirrors + paged canvas + revise-with-context | **WORKING** (`.work/` mirrors, `paginateBlocks` pages, focused revise both ends) | `backend/mirror/`, `DocumentView.tsx`, `docs/plans/10-live-library-and-intermediates.md` |
+| Live publish + in-file diff review | **WORKING** (`publish_summary` writes mapped `.docx`, auto-publishes forgotten turns; auto-reload decorates diffs; accept/reject/instruction in-file) | `backend/tools/`, `extract.BlocksFromMarkdown`, `SummaryDocumentView.tsx`, `docs/plans/11-skills-workflows-and-split.md` |
+| Summary editing surface | **WORKING** (direct paginated canvas, no Slate; blur-commit + Enter-split; right-click diff menu) | `SummaryDocumentView.tsx` (`DocxCanvas`) |
 | Chat observability (tokens, model names, tool trace, logs DB) | **PROPOSAL** (usage + audit rings exist in memory; persistence + UI pending) | `docs/plans/08-operations-growth.md` §§4–5 |
 | CI + releases (tags, installer drive choice, portable zip) | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§6–7 |
 | Bookmarking pages, collections, workspace library content | **FUTURE** (UI placeholders exist) | sidebar views |

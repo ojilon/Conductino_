@@ -1,22 +1,25 @@
 /**
  * AI Reading panel (right, resizable, collapsible).
  *
- * Faces (Phase 4):
+ * Faces:
  *  - Chat       — multi-turn workspace-scoped thread + composer
  *  - Reading    — source companion (selected passage / explanation)
- *  - Review     — summary pending DocumentChange proposals
+ *
+ * Review happens in-file: published summary edits decorate the document
+ * itself (SummaryDocumentView diffs). There is deliberately no separate
+ * proposal queue — one review path, no fallback.
  *
  * Tab switch is driven by reader.ui.aiPanelTab ("chat" | "reading").
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useApp, runningActivity, pendingChangesFor, activeWorkspace } from "../../state/appState";
+import { useApp, runningActivity, activeWorkspace } from "../../state/appState";
 import { useAIRunners, type SelectionRef } from "../../state/aiController";
-import type { AiPanelTab, Document, DocumentChange } from "../../types/domain";
-import { Icon, type IconName } from "../../components/icons";
+import type { AiPanelTab, ChatMessage, Document } from "../../types/domain";
+import { Icon } from "../../components/icons";
 import { Button, EmptyState, IconBtn, Spinner } from "../../components/ui";
 import { cn } from "../../utils/cn";
-import { timeLabel, truncate } from "../../utils/helpers";
+import { timeLabel } from "../../utils/helpers";
 
 /* ------------------------------------------------------------------ */
 /* Live activity strip (shared)                                        */
@@ -71,6 +74,37 @@ function HistoryList({ documentId }: { documentId?: string }) {
 /* Chat face (Phase 4)                                                 */
 /* ------------------------------------------------------------------ */
 
+/** Expandable per-turn tool loop log ("thinking"): what ran, ok/err, ms. */
+function ThinkingTrace({ trace }: { trace: NonNullable<ChatMessage["toolTrace"]> }) {
+  const [open, setOpen] = useState(false);
+  const total = trace.reduce((n, t) => n + t.ms, 0);
+  const errs = trace.filter((t) => !t.ok).length;
+  return (
+    <div className="mt-1.5 border-t border-line-soft pt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[10.5px] text-mute hover:text-ink-700"
+      >
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+        Thinking · {trace.length} call{trace.length === 1 ? "" : "s"}
+        {errs > 0 ? ` · ${errs} failed` : ""} · {total}ms
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-0.5 font-mono text-[10.5px]">
+          {trace.map((t, i) => (
+            <li key={i} className={cn("flex items-center gap-1.5", t.ok ? "text-ink-500" : "text-rose-600")}>
+              <Icon name={t.ok ? "check" : "alert"} size={10} className="shrink-0" />
+              <span className="truncate">{t.tool}</span>
+              <span className="shrink-0 text-mute">{t.ms}ms</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ChatFace({ doc }: { doc: Document }) {
   const { state, dispatch } = useApp();
   const { runChat, ensureThread, newThread } = useAIRunners();
@@ -84,6 +118,10 @@ function ChatFace({ doc }: { doc: Document }) {
     (state.chat.activeId && state.chat.byId[state.chat.activeId]) ||
     Object.values(state.chat.byId).find((t) => t.workspaceId === wsId) ||
     null;
+  // All chats of this workspace, newest first (plan 09 §3 thread switcher).
+  const wsThreads = Object.values(state.chat.byId)
+    .filter((t) => t.workspaceId === wsId)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   // @doc autocomplete: token after the last "@" before the cursor filters
   // workspace documents by title; picking one splices the full title in.
@@ -142,6 +180,27 @@ function ChatFace({ doc }: { doc: Document }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ActivityStrip />
+      {wsThreads.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto px-4 pb-2">
+          {wsThreads.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => dispatch({ type: "chat.setActive", id: t.id })}
+              title={t.title ?? "Research chat"}
+              className={cn(
+                "shrink-0 rounded-full border px-2.5 py-1 text-[10.5px]",
+                t.id === thread?.id
+                  ? "border-iris-400 bg-iris-50 font-medium text-iris-700"
+                  : "border-line-soft text-mute hover:text-ink-700",
+              )}
+            >
+              {(t.title ?? "Chat").slice(0, 18)}
+              {t.messages.length > 0 ? ` · ${t.messages.length}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {!thread || thread.messages.length === 0 ? (
           <EmptyState
@@ -164,6 +223,9 @@ function ChatFace({ doc }: { doc: Document }) {
                 {m.role === "user" ? "You" : "Assistant"}
               </p>
               <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.role === "assistant" && m.toolTrace && m.toolTrace.length > 0 && (
+                <ThinkingTrace trace={m.toolTrace} />
+              )}
             </div>
           ))
         )}
@@ -356,162 +418,12 @@ function CompanionFace({ doc }: { doc: Document }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Review face (summary document)                                      */
-/* ------------------------------------------------------------------ */
-
-const CHANGE_LABEL: Record<DocumentChange["type"], string> = {
-  insert: "Inserted paragraph",
-  modify: "Modified sentence",
-  delete: "Deleted passage",
-};
-
-const CHANGE_ICON: Record<DocumentChange["type"], IconName> = {
-  insert: "plus",
-  modify: "note",
-  delete: "x",
-};
-
-function ReviewFace({ doc }: { doc: Document }) {
-  const { state, dispatch } = useApp();
-  const { runRevise } = useAIRunners();
-  const pending = pendingChangesFor(state, doc.id);
-  const [focusedId, setFocusedId] = useState<string | null>(pending[0]?.id ?? null);
-  const [inspecting, setInspecting] = useState(false);
-
-  useEffect(() => {
-    if (focusedId && !pending.some((c) => c.id === focusedId)) {
-      setFocusedId(pending[0]?.id ?? null);
-      setInspecting(false);
-    }
-  }, [pending, focusedId]);
-
-  const focused = pending.find((c) => c.id === focusedId) ?? null;
-  const accepted = Object.values(state.changes).filter((c) => c.documentId === doc.id && c.status === "accepted").length;
-  const rejected = Object.values(state.changes).filter((c) => c.documentId === doc.id && c.status === "rejected").length;
-
-  const decide = (status: "accepted" | "rejected") => {
-    if (!focused) return;
-    dispatch({ type: "change.decide", id: focused.id, status });
-    dispatch({ type: "toast", message: status === "accepted" ? "Change accepted" : "Change rejected" });
-  };
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <ActivityStrip />
-
-        <section>
-          <h4 className="mb-2 flex items-center justify-between text-[12px] font-semibold text-ink-900">
-            Pending changes
-            <span className="text-[11px] font-normal text-mute">{pending.length}</span>
-          </h4>
-          {pending.length === 0 ? (
-            <div className="rounded-lg border border-moss-200 bg-moss-50 px-3 py-3 text-[12px] text-moss-700">
-              <p className="flex items-center gap-2 font-medium">
-                <Icon name="circleCheck" size={14} /> All changes reviewed
-              </p>
-              <p className="mt-1 text-[11.5px]">
-                {accepted} accepted · {rejected} rejected. Select text in a source and choose “Include in
-                summary” to add new material.
-              </p>
-            </div>
-          ) : (
-            <ul className="space-y-1.5">
-              {pending.map((c) => (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    onClick={() => setFocusedId(c.id)}
-                    className={cn(
-                      "w-full rounded-lg border px-3 py-2 text-left transition-colors",
-                      focusedId === c.id
-                        ? "border-iris-300 bg-iris-50"
-                        : "border-line-soft bg-cream-50 hover:border-line",
-                    )}
-                  >
-                    <p className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink-900">
-                      <Icon name={CHANGE_ICON[c.type]} size={12} className="text-hay-600" />
-                      {CHANGE_LABEL[c.type]}
-                      <span className="ml-auto font-normal text-mute">{timeLabel(c.createdAt)}</span>
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink-500">{truncate(c.newContent, 110)}</p>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {focused && (
-          <div className="space-y-2">
-            <Button variant="solid" icon="check" className="w-full" onClick={() => decide("accepted")}>
-              Accept
-            </Button>
-            <div className="grid grid-cols-3 gap-2">
-              <Button variant="outline" icon="x" onClick={() => decide("rejected")}>
-                Reject
-              </Button>
-              <Button
-                variant={inspecting ? "soft" : "outline"}
-                icon="search"
-                onClick={() => setInspecting((v) => !v)}
-              >
-                Inspect
-              </Button>
-              <Button variant="outline" icon="refresh" onClick={() => runRevise(focused.id)}>
-                Revise
-              </Button>
-            </div>
-            {inspecting && (
-              <div className="fade-in rounded-lg border border-line bg-cream-50 px-3 py-2.5 text-[11.5px] leading-relaxed">
-                <p className="text-mute">
-                  Before:{" "}
-                  {focused.oldContent ? (
-                    <span className="text-ink-500 line-through decoration-rose-300">{truncate(focused.oldContent, 160)}</span>
-                  ) : (
-                    <span className="italic">nothing (insert)</span>
-                  )}
-                </p>
-                <p className="mt-1.5 text-mute">
-                  After:{" "}
-                  <span className="rounded-[3px] bg-hay-100 px-1 text-ink-700">{truncate(focused.newContent, 160)}</span>
-                </p>
-                <p className="mt-1.5 text-mute">
-                  From: {state.sources[focused.sourceId]?.title ?? "session source"}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="space-y-1.5 rounded-lg border border-line-soft bg-cream-50 px-3 py-2.5">
-          <p className="flex items-center gap-2 text-[11.5px] text-ink-700">
-            <span className="h-3 w-5 rounded bg-hay-100 ring-1 ring-hay-200" /> Inserted
-          </p>
-          <p className="flex items-center gap-2 text-[11.5px] text-ink-700">
-            <span className="h-0 w-5 border-b-2 border-hay-300" /> Modified
-          </p>
-        </div>
-      </div>
-
-      <div className="border-t border-line-soft px-4 py-3">
-        <p className="flex items-center gap-2 text-[11.5px] font-medium text-iris-700">
-          <Icon name="shieldCheck" size={14} /> You review every change
-        </p>
-      </div>
-      <HistoryList documentId={doc.id} />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Panel shell + tabs                                                  */
 /* ------------------------------------------------------------------ */
 
 export default function AIReadingPanel({ doc }: { doc: Document }) {
   const { state, dispatch } = useApp();
   const tab: AiPanelTab = state.reader.ui.aiPanelTab ?? "chat";
-  const readingLabel = doc.kind === "summary" ? "Review" : "Reading";
 
   const setTab = (next: AiPanelTab) =>
     dispatch({ type: "reader.ui", patch: { aiPanelTab: next } });
@@ -538,7 +450,7 @@ export default function AIReadingPanel({ doc }: { doc: Document }) {
               tab === "reading" ? "bg-white text-ink-900 shadow-sm" : "text-mute hover:text-ink-700",
             )}
           >
-            {readingLabel}
+            Reading
           </button>
         </div>
         <IconBtn
@@ -548,13 +460,7 @@ export default function AIReadingPanel({ doc }: { doc: Document }) {
         />
       </div>
 
-      {tab === "chat" ? (
-        <ChatFace doc={doc} />
-      ) : doc.kind === "summary" ? (
-        <ReviewFace doc={doc} />
-      ) : (
-        <CompanionFace doc={doc} />
-      )}
+      {tab === "chat" ? <ChatFace doc={doc} /> : <CompanionFace doc={doc} />}
     </div>
   );
 }

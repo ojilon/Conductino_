@@ -20,33 +20,23 @@
   files from another folder still open fresh (stale-root guard, tasks.md
   §1.1).
 
-## 2. Temp mirrors (planned — Phase 17)
+## 2. Temp mirrors (landed — Phase 17)
 
-AI summary editing needs a text surface the model can read/write while the
-`.docx` stays canonical. Decision: **project-local scratch dir**
-`backend/.work/` (git-ignored, see root `.gitignore`), NOT the OS temp dir
-(debuggable, survives restarts, one place to wipe).
+`backend/mirror/` owns summary `.md` working copies under `backend/.work/`
+(git-ignored): snapshot-hash re-sync on user save, op log per edit,
+7-day sweep on `Backend.Init`. `read_summary` prefers the mirror (empty
+summary is valid content); `propose_summary_edit` applies to it, so
+multi-turn refinement composes. Review accept still writes the `.docx`
+(frontend blocks → `WriteSummaryDOCX`), whose mtime bump re-syncs the
+mirror next read. No new bridge was needed.
 
-- Key: root-anchored path + mtime + size (same scheme as `extract_cache`).
-- Content: normalized `.md` mirror of the summary (from `extract.normalize`,
-  plan 07) — the ONLY text the edit tools read/write.
-- Lifecycle: created on summary open/create; refreshed when the `.docx`
-  mtime moves under it; deleted with the workspace or by age (7-day sweep
-  on startup). Never user-facing, never synced.
-- `read_summary` / `propose_summary_edit` operate on the mirror; the
-  accept path writes mirror → blocks → `.docx` (existing `WriteSummaryDOCX`).
+## 3. Page canvas renderer (landed — Phase 17)
 
-## 3. Page canvas renderer (planned — Phase 17)
-
-Goal: docx/md/txt render as **pages**, not one big text block. Scope:
-custom canvas for docx first (we own writer+reader), md/txt reuse it via
-the normalized mirror; **PDF stays on pdf.js** (no second PDF renderer).
-
-- Paginate the canonical blocks (`~2000-char` virtual pages, same constant
-  as `extract.SynthesizedPageSize`); page containers anchor to blockIds so
-  selection/highlights/chat anchors keep working unchanged.
-- Block/segment stays the wire format; pagination is a view concern only.
-- Empty document = one empty page (editors already handle the blank block).
+`paginateBlocks` in `DocumentView.tsx`: greedy ~2000-char virtual pages
+(same constant as `extract.SynthesizedPageSize`), headings never stranded,
+`page` blocks force breaks, empty doc = one empty page. Blocks keep
+`data-block-id` wrappers, so selection/highlights/chat anchors work
+unchanged. Applies to docx/md/txt (PDF routes to `PdfView`, untouched).
 
 ## 4. Explicit non-goals
 

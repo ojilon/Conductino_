@@ -183,6 +183,11 @@ export interface AIRequest {
   /** Phase 5: primary summary document id for propose_summary_edit. */
   primarySummaryId?: ID;
   /**
+   * Workspace-relative path token of the mapped summary file (from document
+   * metadata). publish_summary writes through ONLY here — never a guess.
+   */
+  summaryPath?: string;
+  /**
    * Resolved `@doc` mentions: document ids named in the chat composer.
    * The raw `@token` stays in `query`; these ids tell the harness exactly
    * which documents were meant, so it never guesses. A mentioned summary
@@ -223,6 +228,16 @@ export interface AIResult {
   revision?: string;
   /** Full proposal edits (insert/modify/delete). Legacy `insertion` maps to one insert. */
   proposals?: AIProposal[];
+  /** Chat "thinking" log: one entry per tool dispatch (name + ok + ms). */
+  toolTrace?: { tool: string; ok: boolean; ms: number }[];
+  /** Summary files written this turn: reload each, decorate diffs in-file. */
+  publishedSummaries?: {
+    summaryId: ID;
+    path: string;
+    diffs: { op: "insert" | "modify" | "delete"; target?: string; text?: string; oldText?: string; note?: string }[];
+  }[];
+  /** Proposed-but-unwritten reason (no summary / no path / publish failed). */
+  publishError?: string;
 }
 
 export interface AIHandlers {
@@ -261,6 +276,8 @@ export interface ChatMessage {
   createdAt: number;
   /** Optional link to the document that was in focus when sent. */
   documentId?: ID;
+  /** Assistant turns that ran tools carry the "thinking" log (persisted). */
+  toolTrace?: { tool: string; ok: boolean; ms: number }[];
 }
 
 /**
@@ -352,6 +369,26 @@ export interface Document {
   sourceIds?: ID[];
   /** Mock pagination for source documents. */
   currentPage?: number;
+  /**
+   * In-file write-through diffs (publish_summary): ephemeral review state,
+   * never persisted — decorations over the live blocks. Accept dismisses;
+   * reject applies the inverse edit to blocks (autosave writes the .docx).
+   */
+  diffs?: SummaryDiff[];
+}
+
+/**
+ * One published edit awaiting in-file review. text = new content
+ * (insert/modify) or removed span (delete); oldText = pre-image for
+ * reject-restore (modify/delete).
+ */
+export interface SummaryDiff {
+  id: ID;
+  op: "insert" | "modify" | "delete";
+  target?: string;
+  text: string;
+  oldText?: string;
+  note?: string;
 }
 
 /* ------------------------------------------------------------------ */

@@ -49,6 +49,29 @@ func (h *ToolHost) resolveSourcePath(rel string) (string, []string) {
 			return f, nil
 		}
 	}
+	// Basename stages: users omit folders ("Summary" for
+	// "plant_physiology/Summary.docx"). Only when rel itself carries no
+	// separator — a path naming a folder must match in full.
+	if !strings.Contains(filepath.ToSlash(rel), "/") {
+		for _, f := range files {
+			if strings.EqualFold(filepath.Base(f), rel) {
+				return f, nil
+			}
+		}
+		bstem := strings.ToLower(strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel)))
+		var baseHits []string
+		for _, f := range files {
+			if strings.ToLower(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))) == bstem {
+				baseHits = append(baseHits, f)
+			}
+		}
+		if len(baseHits) == 1 {
+			return baseHits[0], nil
+		}
+		if len(baseHits) > 1 {
+			return "", baseHits[:min(3, len(baseHits))]
+		}
+	}
 	stem := strings.ToLower(strings.TrimSuffix(rel, filepath.Ext(rel)))
 	var stemHits []string
 	for _, f := range files {

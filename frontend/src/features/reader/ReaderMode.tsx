@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
-import { backend, type OpenedFile } from "../../services/backend";
+import { backend, loadWorkspaceThreads, type OpenedFile } from "../../services/backend";
 import { EmptyState, ResizablePanel } from "../../components/ui";
 import { Icon } from "../../components/icons";
 import { isStaleRoot, uid } from "../../utils/helpers";
@@ -114,6 +114,15 @@ export default function ReaderMode() {
       },
     });
     dispatch({ type: "workspace.setActive", id: wsId });
+    // Thread history (plan 09 §3): restore this workspace's chats from
+    // SQLite (latest first) so the conversation survives restarts. In-memory
+    // threads win on id collision; browser mode loads nothing.
+    loadWorkspaceThreads(wsId)
+      .then((threads) => {
+        for (const t of threads) dispatch({ type: "chat.ensure", thread: t });
+        if (threads.length > 0) dispatch({ type: "chat.setActive", id: threads[0].id });
+      })
+      .catch(() => {});
     dispatch({ type: "toast", message: `Library: ${picked}` });
   }, [refreshTree, dispatch]);
 

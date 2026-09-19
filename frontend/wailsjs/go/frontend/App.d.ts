@@ -6,6 +6,8 @@ export function AIMeters():Promise<string>;
 
 export function AppendChatMessage(arg1:models.ChatMessageRecord):Promise<void>;
 
+export function BuildContextPack(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:number,arg8:boolean):Promise<string>;
+
 export function LibraryRoot():Promise<string>;
 
 export function ListDocuments(arg1:string):Promise<Array<models.DocumentRecord>>;
@@ -25,6 +27,8 @@ export function LoadDocument(arg1:string):Promise<models.DocumentRecord>;
 export function LoadPrimarySummary(arg1:string):Promise<models.DocumentRecord>;
 
 export function LoadThread(arg1:string):Promise<models.ChatThreadRecord>;
+
+export function MatchSkills(arg1:string,arg2:string):Promise<string>;
 
 export function OpenFile(arg1:string):Promise<models.OpenedDocument>;
 

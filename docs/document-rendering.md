@@ -20,16 +20,17 @@ Plus `metadata` (title/author/venue/format/pageCount/path), `highlights`
 Everything that is NOT pixels — selection state, AI actions, changes,
 navigation, tabs — works on the model and survives a renderer swap.
 
-## Today (mock renderer + one real extractor)
+## Today (paginated canvas + real extractors)
 
-- `src/features/reader/DocumentView.tsx` — **source documents**: maps
-  blocks to styled headings/paragraphs/lists, renders highlights, maps
-  native text selections to `TextSelection` (block-anchored). Footer still
-  reads "Mock structured render…" on mock-opened files.
+- `src/features/reader/DocumentView.tsx` — **source documents**: paginated
+  canvas (`paginateBlocks`, ~2000-char virtual pages), block-anchored
+  selection mapping to `TextSelection`, highlights, AI toolbar.
 - `src/features/reader/SummaryDocumentView.tsx` — **summary document**:
-  same block mapping but with plain-text `contentEditable` blocks
-  (BASIC WORKING IMPLEMENTATION — no rich formatting, no Slate) and the
-  pending-change treatments (inserted card / modified underline).
+  `DocxCanvas` direct editing (per-block plain-text contentEditable,
+  blur-commit, Enter-split, per-item lists) on the same pagination;
+  published diffs highlight by color (insert green, modify amber, deletes
+  as cards) with a right-click menu (Accept / Reject / instruction +
+  Send to AI). No Slate, no proposal cards — one review path.
 - Extraction is split by type. `.txt`/`.md`/`.docx` are REAL in the desktop build:
   click → `App.OpenFile(path)` → extract-cache lookup (root-anchored path +
   mtime + size; 200-entry LRU) → miss → `Filesystem.Resolve` (workspace containment)
@@ -51,10 +52,10 @@ navigation, tabs — works on the model and survives a renderer swap.
 | **Plain text** | REAL today (`openTextFile`: blank-line paragraphs, caps) | no work needed. |
 
 Editor contract (from `tasks.md` §3, recorded here so renderer work respects
-it): block/segment stays canonical and persisted. If Slate.js lands for
-summaries, convert at the editor boundary only (block → Slate Element,
-segment → Slate Text with marks) and convert back on save — never store
-Slate's internal value, never invent a second wire format.
+it): block/segment stays canonical and persisted. Editors convert at the
+boundary only and convert back on commit — never store editor-internal
+state, never invent a second wire format. (Slate.js was evaluated and
+removed; the canvas edits plain text per block.)
 
 Rule: the renderer is a **leaf component per format**, selected by
 `document.metadata.format`. The wrapper (page header, selection toolbar,
@@ -70,8 +71,8 @@ scroll container, `data-block-id` anchors for selection mapping) stays.
   text + occurrence) — reopening an unchanged file yields identical IDs, so
   highlights, pending changes, and chat anchors survive. Edited blocks get new
   IDs, correctly orphaning stale anchors.
-- Pending summary modifies render as **inline Slate decorations** (click the
-  underlined span for accept/reject/revise); deletes/inserts stay card-based.
+- Published summary edits render as **in-file color highlights** (right-click
+  the span for accept/reject/instruct); deletes render as cards (no span left).
 - Next: pdf.js text-layer coordinates for PDF pages (block offsets are the
   interim system); range-precise `doc.highlight.add` already isolates the UI
   code in `DocumentView.tsx`.

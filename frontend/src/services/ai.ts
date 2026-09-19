@@ -50,6 +50,8 @@ interface GoAIRequest {
   /** Phase 5 tools. */
   summaryContent?: string;
   primarySummaryId?: string;
+  /** Workspace-relative summary path token — publish_summary writes ONLY here. */
+  summaryPath?: string;
   /** Resolved @doc mentions (document ids). */
   mentionIds?: string[];
   /** Focused pending proposal for chat-targeted revise. */
@@ -185,6 +187,7 @@ class WailsAIProvider implements AIProvider {
         mode: request.mode,
         summaryContent: request.summaryContent,
         primarySummaryId: request.primarySummaryId,
+        summaryPath: request.summaryPath,
         mentionIds: request.mentionIds,
         focusedChange: request.focusedChange,
         requestId,

@@ -34,8 +34,18 @@ export function reduceWorkspace(state: AppState, action: Action): AppState | nul
     case "workspace.setPrimarySummary": {
       const ws = state.workspace.byId[action.workspaceId];
       if (!ws) return state;
+      // Designating a document as the workspace summary also flips its kind:
+      // source views are read-only, summaries are editable + AI targets.
+      // Without this, a disk-opened Summary.docx stays kind "source" and
+      // every merge/propose path silently drops (no summary exists).
+      const doc = state.documents[action.summaryId];
+      const documents =
+        doc && doc.kind !== "summary"
+          ? { ...state.documents, [action.summaryId]: { ...doc, kind: "summary" as const } }
+          : state.documents;
       return {
         ...state,
+        documents,
         workspace: {
           ...state.workspace,
           byId: {

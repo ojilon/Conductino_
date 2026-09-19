@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"Conductino/backend/usage"
 )
 
 // OpenAICompatBackend talks to Groq / OpenRouter / any OpenAI-compatible chat API.
@@ -174,6 +177,14 @@ func oaiToolSchemas() []oaiTool {
 			}, "text")),
 		fn(ToolSearchWorkspace, "Keyword search over readable workspace files; returns quoted snippets.",
 			obj(map[string]any{"query": str("Keyword to find")}, "query")),
+		fn(ToolRunWorkflow, "Run a named multi-step routine. summarize-folder digests up to 3 files (read-only). add-to-summary reads one source and queues cited insert proposals (needs source path; summary must exist). Proposals stay user-gated; nothing is written.",
+			obj(map[string]any{
+				"workflow": str("Routine name: summarize-folder | add-to-summary"),
+				"source":   str("Workspace-relative source path (add-to-summary only)"),
+				"topic":    str("What to extract (add-to-summary only)"),
+			}, "workflow")),
+		fn(ToolPublishSummary, "Write the summary working copy through to the mapped .docx (summaries are openly editable; sources stay read-only). Call after proposing, then report. No args.",
+			obj(map[string]any{})),
 	}
 }
 
@@ -246,6 +257,22 @@ func toolsUnsupported(err error) bool {
 	return false
 }
 
+// isRateLimitText reports whether a raw provider error body signals quota /
+// rate limiting (same vocabulary as isModelGone's quota arm, minus the
+// model-gone needles which belong to the 404 path, not this one).
+func isRateLimitText(detail string) bool {
+	s := strings.ToLower(detail)
+	for _, needle := range []string{
+		"429", "rate limit", "rate-limit", "quota", "resource exhausted",
+		"limit exceeded",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *OpenAICompatBackend) postChat(ctx context.Context, prompt string, maxTokens int, model string, withTools bool) (string, error) {
 	req := oaiChatRequest{
 		Model: model,
@@ -288,17 +315,36 @@ func (b *OpenAICompatBackend) postChat(ctx context.Context, prompt string, maxTo
 		return "", fmt.Errorf("AI response was not understood (status %d).", resp.StatusCode)
 	}
 	if resp.StatusCode == 429 {
-		msg := "rate limited"
+		// UI gets the category only; raw body (quota numbers, upgrade
+		// links, org IDs) goes to the server log for debugging.
 		if decoded.Error != nil && decoded.Error.Message != "" {
-			msg = decoded.Error.Message
+			log.Printf("[ai] %s 429 detail: %s", b.name, truncateRunes(decoded.Error.Message, 500))
 		}
-		return "", fmt.Errorf("429 rate limit (%s): %s", b.name, msg)
+		return "", fmt.Errorf("429 rate limit (%s).", b.name)
+	}
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		// Auth failure: keep the invalid-key signal matchable after the raw
+		// body is dropped, and name the exact env var to fix.
+		if decoded.Error != nil && decoded.Error.Message != "" {
+			log.Printf("[ai] %s auth failure (status %d): %s", b.name, resp.StatusCode, truncateRunes(decoded.Error.Message, 300))
+		}
+		return "", fmt.Errorf("%s: invalid API key — check %s.", b.name, keyEnvFor(b.name))
 	}
 	if resp.StatusCode >= 500 {
 		return "", fmt.Errorf("503 unavailable (%s, status %d)", b.name, resp.StatusCode)
 	}
 	if decoded.Error != nil && decoded.Error.Message != "" {
-		return "", fmt.Errorf("%s: %s", b.name, truncateRunes(decoded.Error.Message, 200))
+		detail := decoded.Error.Message
+		if usage.IsAuthErrorText(detail) {
+			log.Printf("[ai] %s auth failure (status %d): %s", b.name, resp.StatusCode, truncateRunes(detail, 300))
+			return "", fmt.Errorf("%s: invalid API key — check %s.", b.name, keyEnvFor(b.name))
+		}
+		if isRateLimitText(detail) {
+			log.Printf("[ai] %s quota detail: %s", b.name, truncateRunes(detail, 500))
+			return "", fmt.Errorf("429 rate limit (%s).", b.name)
+		}
+		log.Printf("[ai] %s error (status %d): %s", b.name, resp.StatusCode, truncateRunes(detail, 500))
+		return "", fmt.Errorf("%s returned an error.", b.name)
 	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("%s error (status %d)", b.name, resp.StatusCode)
