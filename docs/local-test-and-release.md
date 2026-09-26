@@ -23,18 +23,24 @@ Unit tests are hermetic (model HTTP stays behind fakes).
 
 ## 2. Test locally (quick loop — do this before every push)
 
-From the repo root:
-
-```bash
-go vet ./...
-go test ./...
-```
+From the repo root — frontend first, then Go:
 
 ```bash
 cmd /c "pnpm --dir frontend install --frozen-lockfile"  # first time / lockfile change
 cmd /c "pnpm --dir frontend exec tsc --noEmit"           # or: pnpm --dir frontend typecheck
 cmd /c "pnpm --dir frontend build"                       # catches bundle errors
 ```
+
+```bash
+go vet ./...
+go test ./...
+```
+
+Order matters on a fresh clone: the frontend build must run **before**
+any Go command, because `frontend/main.go` embeds `frontend/dist`
+(`//go:embed all:dist`) and `dist/` is gitignored — `go vet`/`go test`
+fail with `pattern all:dist: no matching files found` until the first
+`pnpm build` creates it. (Once `dist/` exists, any order works.)
 
 These are the exact commands `.github/workflows/ci.yml` runs on every
 PR/push — if they pass locally, CI will pass.
@@ -138,10 +144,10 @@ Agents/CI never do this automatically.
 ## 5. Cheat sheet
 
 ```bash
-# Full local gate (same as CI)
-go vet ./... ; go test ./...
+# Full local gate (same as CI — frontend first, then Go; see §2 for why)
 cmd /c "pnpm --dir frontend exec tsc --noEmit"
 cmd /c "pnpm --dir frontend build"
+go vet ./... ; go test ./...
 
 # Dev / production run
 wails dev

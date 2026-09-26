@@ -24,12 +24,6 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      - name: Go vet
-        run: go vet ./...
-
-      - name: Go tests
-        run: go test ./...
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -46,5 +40,16 @@ jobs:
       - name: Frontend typecheck
         run: pnpm --dir frontend exec tsc --noEmit
 
+      # Frontend build BEFORE any Go step: frontend/main.go embeds
+      # frontend/dist (//go:embed all:dist), which is gitignored and only
+      # exists after this build. go vet/test compile that package, so on a
+      # fresh runner they fail with "pattern all:dist: no matching files"
+      # when run first.
       - name: Frontend production build
         run: pnpm --dir frontend build
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests
+        run: go test ./...

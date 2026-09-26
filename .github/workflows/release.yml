@@ -48,12 +48,9 @@ jobs:
         run: choco install nsis -y
 
       # Same gate as ci.yml — abort before building when red.
-      - name: Go vet
-        run: go vet ./...
-
-      - name: Go tests
-        run: go test ./...
-
+      # Frontend build runs BEFORE any Go step: frontend/main.go embeds
+      # frontend/dist (//go:embed all:dist), which is gitignored and only
+      # exists after this build (see ci.yml comment).
       - name: Install frontend deps (frozen lockfile)
         run: pnpm --dir frontend install --frozen-lockfile
 
@@ -62,6 +59,12 @@ jobs:
 
       - name: Frontend production build
         run: pnpm --dir frontend build
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests
+        run: go test ./...
 
       - name: Wails build (exe + NSIS installer)
         run: wails build -nsis

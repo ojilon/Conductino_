@@ -28,15 +28,20 @@ Hermetic rule: **no live API keys** in CI unit tests. Model HTTP stays behind fa
 
 ```bash
 # From repo root — adjust if go.mod lives under backend/
-go vet ./...
-go test ./...
-
 cd frontend
 pnpm install          # first time / lockfile change
 pnpm exec tsc --noEmit
-pnpm build            # catches bundle errors
+pnpm build            # catches bundle errors; ALSO creates frontend/dist,
+                      # which frontend/main.go embeds (//go:embed all:dist).
+                      # On a fresh clone, this build must run BEFORE any Go
+                      # command — go vet/test fail with
+                      # "pattern all:dist: no matching files found" until
+                      # dist/ exists (it is gitignored).
 # pnpm test           # when frontend tests exist
 cd ..
+
+go vet ./...
+go test ./...
 ```
 
 Optional full desktop binary (not required every commit):

@@ -14,8 +14,8 @@
 
 ### Tests (local — same commands CI will run)
 
+- [ ] `pnpm --dir frontend exec tsc --noEmit` and `pnpm --dir frontend build` pass — **first** on a fresh clone (`go vet`/`go test` need `frontend/dist` to exist for the `//go:embed`).
 - [ ] `go vet ./...` and `go test ./...` pass.
-- [ ] `pnpm --dir frontend exec tsc --noEmit` and `pnpm --dir frontend build` pass.
 
 ### Build (local optional, CI on tag required)
 
