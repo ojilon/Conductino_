@@ -55,6 +55,7 @@ wails build
 
 Minimum bar (implement in `.github/workflows/ci.yml`):
 
+
 1. `go vet ./...`  
 2. `go test ./...`  
 3. `pnpm --dir frontend install --frozen-lockfile` (or project-equivalent)  
@@ -120,4 +121,4 @@ Do **not** duplicate Go tests as markdown. Markdown is for **manual** and **prod
 - [ ] Tag workflow keeps `prerelease: true` unless docs explicitly change.  
 - [ ] No secrets required for unit tests.  
 - [ ] New package → at least one `*_test.go` or an explicit deferral note in the PR.  
-- [ ] Do not upload binaries from the PR workflow.  
+- [ ] Do not upload binaries from the PR workflow.
