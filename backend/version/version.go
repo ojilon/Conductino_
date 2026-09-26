@@ -11,4 +11,4 @@
 package version
 
 // Version is the current app version (no leading "v"; tags add it).
-const Version = "0.0.1"
+const Version = "0.0.2"

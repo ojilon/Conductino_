@@ -99,10 +99,10 @@ creates `config.json`, `conductino.db`, `skills/`, `cache/extract/`,
 
 ### 4.1 Bump the version (two places, same value)
 
-1. `backend/version/version.go` — `Version = "0.0.1"` (single source of truth, no `v` prefix).
+1. `backend/version/version.go` — `Version = "0.0.2"` (single source of truth, no `v` prefix).
 2. `wails.json` — `info.productVersion` (stamps the Windows binary metadata).
 
-Both must match; tags add the `v` (`Version "0.0.1"` → tag `v0.0.1`).
+Both must match; tags add the `v` (`Version "0.0.2"` → tag `v0.0.2`).
 
 ### 4.2 Write the release notes
 
@@ -118,8 +118,8 @@ the notes file from the tagged commit. Missing file? CI falls back to the
 ### 4.3 Tag and push
 
 ```bash
-git tag -a v0.0.1 -m "v0.0.1"
-git push origin v0.0.1
+git tag -a v0.0.2 -m "v0.0.2"
+git push origin v0.0.2
 ```
 
 Any branch is fine — the release follows the tag, not the branch.
