@@ -5,16 +5,14 @@ Two application modes — **Browser** (research sessions with page tabs + AI Bro
 (document subtabs, PDF canvas + text views, AI chat with `@doc` targeting, editable research
 summary with reviewed AI changes).
 
-> **Stability note:** this project is mid-migration and parts are unstable by
-> design. The folder-open / library / extraction pipe is wired with typed
-> failure reasons (no mock fallback); the chosen folder persists across
-> restarts; summaries edit in Slate with user-gated AI proposals. Known open
-> items: stale-tab handling on folder switch is tag-and-warn only, browser
-> engine is still mocked, scanned PDFs are out of scope. `docs/` matches the
-> tree again; the authoritative inventory — what exists, what's wrong, why,
-> and what to do — is **`tasks.md`** at the repo root plus
-> **`docs/plans/04-implementation-phases.md`**. Read them before changing
-> anything in `backend/` or the reader sidebar.
+> **Stability note:** mid-migration; parts are unstable by design. Folder-open /
+> library / extraction use typed failures (no mock fallback); chosen folder
+> persists; summary path uses mirrors + tools/skills/workflows on the harness tip.
+>
+> **Planning source of truth on this line of work:**
+> `docs/plans/00-current-priorities.md` + `docs/plans/README.md`.
+> **Next foundation:** `docs/release-prep/` (tags, installer drive choice, local storage).
+> Prefer those over older phase lists when they conflict. `tasks.md` remains useful for file-level bugs.
 
 ## Quick start
 
@@ -63,9 +61,11 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
   (dispatch + typed errors), `text.go`, `docx.go`, `pdf.go`, `ids.go`
   (stable content-addressed block IDs), `normalize.go` + `page.go`
   (plan 07 windowed-reading stubs).
+- `backend/mirror/` — summary `.md` working copies (op log, re-sync; see plan 10).
 - `backend/tools/` — folder-scoped tools: `tools.go` (registry, dispatch,
   catalog, audit), `paths.go` (Resolve jail + did-you-mean), `search.go`
   (keyword search + caps). No model calls, no shell.
+- `backend/skills/` + `backend/workflows/` — skill loader + gated routines (plan 11).
 - `backend/usage/` — telemetry only: `usage.go` (meters, RPM rings),
   `policy.go` (cost classes, semaphore, explain cache).
 - `backend/ai/` — network-only provider package: `service.go` (failover
@@ -90,11 +90,8 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
   run **AI Browse** and watch the streaming phases fill ranked source cards ·
   **Send to Reader** a result · open the source preview.
 - **Reader:** select any sentence in a source → toolbar appears → **Ask AI** / **Go deeper** /
-  **Include in summary** (proposes a highlighted change in the Research Summary) / **Save note** ·
-  open the **Chat** tab → ask with `@Title` to target a document, select text to anchor
-  a region, say "shorten this proposal" to revise a pending change ·
-  open the **Research Summary** tab → review inline proposals: accept / reject / revise ·
-  edit the summary directly in Slate (autosaves to `.docx`; manual **Save DOCX** too).
+  **Include in summary** / **Save note** · open **Chat** with `@Title` targeting ·
+  summary editing / review path per current harness UI (mirrors + tools).
 - **Panels:** drag the right panel edge to resize (double-click resets) · collapse either left
   panel · the workspace expands accordingly.
 
@@ -102,30 +99,26 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
 
 | Question | Doc |
 |---|---|
-| What is broken / missing / planned, with file:line refs? | **`tasks.md`** (read first) |
-| How is the app structured? Layers? Wails ↔ React ↔ Go? | `docs/architecture.md` |
-| Where does document state live? What is persisted? | `docs/state-model.md` |
-| **Where do I plug in the real AI API?** | `docs/ai-integration.md` (+ `docs/plans/05-multi-provider-apis.md` for Groq/OpenRouter/failover) |
-| **Where do I plug in the PDF renderer / DOCX parsing?** | Landed: `PdfView.tsx` (pdf.js canvas) + `backend/extract/pdf.go`, `docx.go`; see `docs/document-rendering.md` + `tasks.md` §4 |
-| **Where does SQLite belong?** | Landed default: `backend/services/sqlite_storage.go` (+ `extract_cache`); `docs/architecture.md` |
-| What is implemented vs mocked vs placeholder? | `docs/future-work.md` status table (known bugs live in `tasks.md` §1) |
-| What is the delivery order / what lands next? | `docs/plans/04-implementation-phases.md` (Phases 0–13 done; 14–15 planned) |
-| Backend resplit / paged reading / skills / releases? | `docs/plans/06-backend-resplit.md`, `07-source-reading.md`, `08-operations-growth.md` (proposals) |
+| **What next? (ordered)** | **`docs/plans/00-current-priorities.md`** + **`docs/plans/README.md`** |
+| **Tags, installer (D: drive), local storage, pre-release data root** | **`docs/release-prep/`** |
+| Mirrors, empty docs, page canvas | `docs/plans/10-live-library-and-intermediates.md` |
+| Skills, workflows, package split, thinking trace | `docs/plans/11-skills-workflows-and-split.md` |
+| File-level bugs / inventory | `tasks.md` |
+| Layers / architecture | `docs/architecture.md` |
+| Document state | `docs/state-model.md` |
+| AI API | `docs/ai-integration.md` |
+| PDF / DOCX rendering | `docs/document-rendering.md` |
+| Status table | `docs/future-work.md` |
 
 ## Status in one line
 
-UI **WORKING** · app state **WORKING** · AI **REAL** (Gemini/Groq/OpenRouter via Go, failover + budgets + Settings meters) ·
-folder-open + library tree + `.txt`/`.md`/`.docx`/`.pdf` open **WORKING in desktop build** (PDFs render on canvas; failures are typed, never mock) ·
-summary editor **Slate with inline AI-change review + gated DOCX autosave** ·
-SQLite **default with extract cache** · chosen folder **persisted across restarts**.
-(Browser preview remains fully mocked — no dialog, mock tree, mock extraction.)
+UI **WORKING** · app state **WORKING** · AI **REAL** (multi-provider via Go) ·
+library + extract **WORKING in desktop** · summary **mirrors + skills/workflows on harness tip** ·
+SQLite **default** · chosen folder **persisted**.
+(Browser preview remains largely mocked for page content.)
 
 ## Lightweight by design
 
 No Electron, no state library, no icon/font/animation frameworks beyond
-Tailwind + two Google fonts, no diff engine — the scaffold targets a low-spec
-Windows machine (4 GB RAM, Celeron), and each integration landed additively:
-pdf.js canvas leaf, stdlib-only DOCX, pure-Go SQLite (`modernc.org/sqlite`),
-stdlib HTTP model clients (no vendor SDKs). Extraction library candidates
-were screened against this constraint — see `tasks.md` §4. cgo stays out
-until Go-side profiling says otherwise (`docs/plans/06-backend-resplit.md` §6).
+Tailwind + two Google fonts — targets a low-spec Windows machine.
+Offline packages stay stdlib-first where possible (`extract`, `tools`, `skills`, `mirror`, `usage`).
