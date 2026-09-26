@@ -25,11 +25,13 @@ Almost everything user-facing still needs a **stable, choosable data root** (ins
 
 → Entire folder **`docs/release-prep/`**
 
-1. Versioning + tags  
+1. Versioning + tags (`major.minor.patch`)  
 2. App-data / `CONDUCTINO_DATA` layout (and how it relates to current `backend/.work/`)  
 3. Wails build + NSIS **directory page** (user picks install drive) + portable zip  
 4. Repo **`.dev-data/`** (or formalize `.work`) as pre-release debug mirror  
 5. First-release smoke checklist  
+6. **CI:** tests on PR; on `v*` tag → build assets → **default pre-release** ([06](../release-prep/06-ci-and-github-releases.md), [07](../release-prep/07-tests-local-and-ci.md))  
+7. **Release notes folder** `docs/release-prep/release-notes/vX.Y.Z.md` for CI body  
 
 ### Phase B — Close gaps on harness (after A or in parallel only if no new data roots needed)
 
@@ -46,10 +48,12 @@ Almost everything user-facing still needs a **stable, choosable data root** (ins
 - Cloud multi-user backend
 - Non-GC rewrite of offline packages (keep boundaries clean only)
 - OCR / scanned PDF pipeline
+- In-app auto-updater from GitHub Releases (CI can publish assets first)
 
 ## Agent checklist
 
 - [ ] Base work on **this** harness tip, not stale `main`.
 - [ ] Prefer extending `mirror` / `skills` / `workflows` / `tools` over new parallel trees.
 - [ ] Any new on-disk state: define root via release-prep path rules first.
+- [ ] Tag releases are **pre-release** by default until a human promotes them.
 - [ ] Small commits; cite `docs/plans/…` or `docs/release-prep/…`.
