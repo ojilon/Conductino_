@@ -10,11 +10,13 @@ summary with reviewed AI changes).
 > failure reasons (no mock fallback); the chosen folder persists across
 > restarts; summaries edit in Slate with user-gated AI proposals. Known open
 > items: stale-tab handling on folder switch is tag-and-warn only, browser
-> engine is still mocked, scanned PDFs are out of scope. `docs/` matches the
-> tree again; the authoritative inventory — what exists, what's wrong, why,
-> and what to do — is **`tasks.md`** at the repo root plus
-> **`docs/plans/04-implementation-phases.md`**. Read them before changing
-> anything in `backend/` or the reader sidebar.
+> engine is still mocked, scanned PDFs are out of scope.
+>
+> **Current planning source of truth:** `docs/plans/README.md` and
+> `docs/plans/00-current-priorities.md`. **First concrete work:**
+> `docs/release-prep/` (tags, installer with drive choice, local storage).
+> Older phase docs remain historical. Read the active plans before changing
+> `backend/` or the reader sidebar.
 
 ## Quick start
 
@@ -94,15 +96,18 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
 
 | Question | Doc |
 |---|---|
-| What is broken / missing / planned, with file:line refs? | **`tasks.md`** (read first) |
-| How is the app structured? Layers? Wails ↔ React ↔ Go? | `docs/architecture.md` |
-| Where does document state live? What is persisted? | `docs/state-model.md` |
-| **Where do I plug in the real AI API?** | `docs/ai-integration.md` (+ `docs/plans/05-multi-provider-apis.md` for Groq/OpenRouter/failover) |
-| **Where do I plug in the PDF renderer / DOCX parsing?** | Landed: `PdfView.tsx` (pdf.js canvas) + `backend/services/pdf.go`, `docx.go`; see `docs/document-rendering.md` + `tasks.md` §4 |
-| **Where does SQLite belong?** | Landed default: `backend/services/sqlite_storage.go` (+ `extract_cache`); `docs/architecture.md` |
-| What is implemented vs mocked vs placeholder? | `docs/future-work.md` status table (known bugs live in `tasks.md` §1) |
-| What is the delivery order / what lands next? | `docs/plans/04-implementation-phases.md` (Phases 0–13 done; 14–15 planned) |
-| Backend resplit / paged reading / skills / releases? | `docs/plans/06-backend-resplit.md`, `07-source-reading.md`, `08-operations-growth.md` (proposals) |
+| **What do we build next? (ordered)** | **`docs/plans/00-current-priorities.md`** + **`docs/plans/README.md`** |
+| **First concrete work (tags, installer, local storage, D: drive)** | **`docs/release-prep/`** |
+| Intermediate documents (mirrors, meta, edit tracking) | `docs/plans/09-intermediate-documents.md` |
+| Skills, workflows, dynamic guidance | `docs/plans/10-skills-and-workflows.md` |
+| AI tools, jail, Python helpers, thinking events | `docs/plans/11-ai-surface-and-tools.md` |
+| Live AI ↔ frontend reflection | `docs/plans/12-bidirectional-reflection.md` |
+| What is broken / missing (file:line inventory) | `tasks.md` (still useful; cross-check with active plans) |
+| How is the app structured? Layers? | `docs/architecture.md` |
+| Where does document state live? | `docs/state-model.md` (will track intermediates as they land) |
+| AI API plug-in points | `docs/ai-integration.md` |
+| PDF / DOCX rendering | `docs/document-rendering.md` |
+| Implemented vs mocked | `docs/future-work.md` |
 
 ## Status in one line
 
@@ -120,4 +125,4 @@ Windows machine (4 GB RAM, Celeron), and each integration landed additively:
 pdf.js canvas leaf, stdlib-only DOCX, pure-Go SQLite (`modernc.org/sqlite`),
 stdlib HTTP model clients (no vendor SDKs). Extraction library candidates
 were screened against this constraint — see `tasks.md` §4. cgo stays out
-until Go-side profiling says otherwise (`docs/plans/06-backend-resplit.md` §6).
+until Go-side profiling says otherwise.
