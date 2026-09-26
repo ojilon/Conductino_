@@ -12,14 +12,19 @@ Skills, mirrors, SQLite, cache, and logs need a **stable place on disk** the use
 
 | File | Topic |
 |------|--------|
-| [01-versioning-and-tags.md](01-versioning-and-tags.md) | Semver, annotated tags, changelog |
+| [01-versioning-and-tags.md](01-versioning-and-tags.md) | Semver `major.minor.patch`, annotated tags, changelog |
 | [02-local-storage-layout.md](02-local-storage-layout.md) | App-data, `CONDUCTINO_DATA`, relation to `.work` / `.conductino` |
-| [03-build-and-installer.md](03-build-and-installer.md) | Wails build, NSIS directory choice, portable zip |
+| [03-build-and-installer.md](03-build-and-installer.md) | Local `wails build`, NSIS directory choice, portable zip |
 | [04-temp-debug-mirror.md](04-temp-debug-mirror.md) | Repo-local debug data root before release |
 | [05-first-release-checklist.md](05-first-release-checklist.md) | Smoke + tag checklist |
+| [06-ci-and-github-releases.md](06-ci-and-github-releases.md) | **CI on tag → build assets → default pre-release**; notes folder |
+| [07-tests-local-and-ci.md](07-tests-local-and-ci.md) | **Same tests locally and in CI**; where to add cases |
+| [release-notes/](release-notes/) | Per-tag markdown CI uses for Release body |
 
 ## Agent rules
 
 - Implement path resolution before assuming fixed `C:\` or only `backend/.work/`.
 - Do not commit built binaries or user documents.
 - After path roots exist, promote mirror/skills/cache writers to use them.
+- Tag workflow creates **pre-releases** by default; promote to full release manually.
+- Write `docs/release-prep/release-notes/vX.Y.Z.md` before or with the tagged commit.
