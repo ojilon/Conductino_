@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/apppaths"
 	"Conductino/backend/models"
 	"Conductino/backend/mirror"
 	"Conductino/backend/skills"
@@ -125,20 +126,28 @@ func New() *GeminiService {
 
 // loadBundledSkills reads versioned instruction skills (plan 11 §1).
 // Best-effort: a missing/unreadable dir yields no skills and prompts stay
-// exactly as before. Candidates cover `wails dev` / `go test` (repo-root
-// cwd) and installed binaries (skills beside the executable).
+// exactly as before. Order: bundled backend/skills, then the app-data
+// resolver (CONDUCTINO_DATA → .dev-data → installed), so user staging
+// wins without shadowing bundled defaults when empty.
 func loadBundledSkills() []skills.Skill {
 	var dirs []string
 	dirs = append(dirs, "backend/skills")
+	dirs = append(dirs, apppaths.SkillsDir(), apppaths.DevSkillsDir())
 	if exe, err := os.Executable(); err == nil {
 		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "skills"))
 	}
+	seen := map[string]bool{}
+	var out []skills.Skill
 	for _, d := range dirs {
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
 		if sk, err := skills.LoadDir(d); err == nil && len(sk) > 0 {
-			return sk
+			out = append(out, sk...)
 		}
 	}
-	return nil
+	return out
 }
 
 func loadSecondaryBackends() []ModelBackend {

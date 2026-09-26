@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/apppaths"
 	"Conductino/backend/extract"
 )
 
@@ -43,16 +44,46 @@ type Store struct {
 // New creates a store rooted at dir (created on demand per call).
 func New(dir string) *Store { return &Store{dir: dir} }
 
-// DefaultDir resolves backend/.work/summaries: repo-root cwd first (wails
-// dev, go test), then beside the executable (installed binary).
+// DefaultDir resolves the summaries directory via the app-data resolver
+// (backend/apppaths), keeping the legacy dev path until .dev-data exists:
+//
+//  1. CONDUCTINO_DATA set → <data>/work/summaries (tests, portable power).
+//  2. .dev-data present at the repo root → .dev-data/work/summaries.
+//  3. Legacy dev (repo-root cwd, no .dev-data yet) → backend/.work/summaries.
+//  4. Installed/portable → app-data or exe-adjacent work/summaries.
+//
+// Do not hard-code a second location — change backend/apppaths instead.
 func DefaultDir() string {
 	if _, err := os.Stat("backend"); err == nil {
-		return filepath.Join("backend", ".work", "summaries")
+		if _, derr := os.Stat(filepath.Join(devRoot(), ".dev-data")); derr == nil {
+			return filepath.Join(devRoot(), ".dev-data", "work", "summaries")
+		}
+		if os.Getenv("CONDUCTINO_DATA") == "" {
+			return filepath.Join("backend", ".work", "summaries")
+		}
 	}
-	if exe, err := os.Executable(); err == nil {
-		return filepath.Join(filepath.Dir(exe), ".work", "summaries")
+	return apppaths.SummariesDir()
+}
+
+// devRoot walks up from cwd looking for go.mod/wails.json (repo root).
+func devRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
 	}
-	return filepath.Join(".work", "summaries")
+	dir := cwd
+	for {
+		for _, m := range []string{"go.mod", "wails.json"} {
+			if _, err := os.Stat(filepath.Join(dir, m)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cwd
+		}
+		dir = parent
+	}
 }
 
 func hash(s string) string {

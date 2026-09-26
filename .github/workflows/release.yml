@@ -1,0 +1,109 @@
+# Tag → build → pre-release. Only v* tags trigger this workflow.
+#
+# Design: docs/release-prep/06-ci-and-github-releases.md.
+# Safety defaults (non-negotiable):
+#   1. prerelease: true — promoting to a full release is a manual step.
+#   2. Tests must pass before any asset is uploaded (fail → no Release).
+#   3. Release body comes from repo files, never model output in CI logs.
+#      Order: docs/release-prep/release-notes/<tag>.md → CHANGELOG.md
+#      section → generated stub (tag + SHA + compare link).
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create Release + upload assets
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tag commit + history for changelog fallback
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Wails CLI (pinned)
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: Install NSIS (installer builder)
+        run: choco install nsis -y
+
+      # Same gate as ci.yml — abort before building when red.
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Install frontend deps (frozen lockfile)
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Frontend typecheck
+        run: pnpm --dir frontend exec tsc --noEmit
+
+      - name: Frontend production build
+        run: pnpm --dir frontend build
+
+      - name: Wails build (exe + NSIS installer)
+        run: wails build -nsis
+
+      - name: Portable zip (no admin required)
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = Get-ChildItem build/bin/*.exe | Where-Object { $_.Name -notlike '*-installer.exe' } | Select-Object -First 1
+          if (-not $exe) { throw "no exe found under build/bin" }
+          Compress-Archive -Path $exe.FullName -DestinationPath "build/bin/Conductino-$tag-windows-amd64-portable.zip" -Force
+          Get-ChildItem build/bin
+
+      - name: Resolve release body
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notesFile = "docs/release-prep/release-notes/$tag.md"
+          $bodyFile = "release-body.md"
+          if (Test-Path -LiteralPath $notesFile) {
+            Copy-Item $notesFile $bodyFile
+            "source=release-notes-file" >> $env:GITHUB_OUTPUT
+          } elseif (Test-Path -LiteralPath "CHANGELOG.md") {
+            # Fallback: extract the matching ## section from CHANGELOG.md.
+            $text = Get-Content -Raw CHANGELOG.md
+            $pat = "(?ms)^##\s+" + [regex]::Escape($tag) + "\b.*?(?=^##\s+|\z)"
+            $m = [regex]::Match($text, $pat)
+            if ($m.Success) { Set-Content $bodyFile $m.Value } else { Set-Content $bodyFile "# $tag`n`nSee CHANGELOG.md." }
+            "source=changelog" >> $env:GITHUB_OUTPUT
+          } else {
+            "# $tag`n`nCompare: ${{ github.server_url }}/${{ github.repository }}/compare/$tag" | Set-Content $bodyFile
+            "source=stub" >> $env:GITHUB_OUTPUT
+          }
+          "bodyfile=$bodyFile" >> $env:GITHUB_OUTPUT
+
+      - name: Create pre-release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          prerelease: true # promote manually on GitHub when intentional
+          body_path: ${{ steps.notes.outputs.bodyfile }}
+          files: |
+            build/bin/*.exe
+            build/bin/*.zip

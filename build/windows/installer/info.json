@@ -1,0 +1,7 @@
+{
+  "companyName": "{{.Info.CompanyName}}",
+  "productName": "{{.Info.ProductName}}",
+  "productVersion": "{{.Info.ProductVersion}}",
+  "copyright": "{{.Info.Copyright}}",
+  "comments": "{{.Info.Comments}}"
+}
