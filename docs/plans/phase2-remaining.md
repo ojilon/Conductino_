@@ -12,11 +12,13 @@
 | `ReaderMode` folder pick + openFile `workspaceId` | done |
 | Mock seed: workspace + runtime tags on sources/docs/changes | done (via `createInitialState` wrapper in `appState.tsx`) |
 
-## Optional cleanup
+## Optional cleanup — DONE
 
-`frontend/src/mock/data.ts` can still be retagged at source with `workspaceId: "ws-demo"`
-and an inline `workspace` block in `createInitialState` so the seed wrapper is no longer
-needed. That is cosmetic: the wrapper already injects the same tags at runtime.
+`src/mock/` is deleted. `createInitialState` lives directly in
+`state/appState.tsx` (empty chrome + inline `ws-demo` workspace block, no
+wrapper, no retagging) and "Send to Reader" builds documents from real
+source fields in `AIBrowsePanel.tsx`. The snippet below is kept as the
+record of what the wrapper used to inject:
 
 ```ts
 // createInitialState workspace block (optional, already injected by appState):

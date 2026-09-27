@@ -12,8 +12,9 @@
  */
 
 import { useRef, useState } from "react";
-import { useApp } from "../../state/appState";
+import { useApp, activeWorkspace } from "../../state/appState";
 import { useAIRunners, type SelectionRef } from "../../state/aiController";
+import { setPrimarySummary } from "../../services/backend";
 import type { Document, DocumentBlock } from "../../types/domain";
 import { Icon } from "../../components/icons";
 import { clamp, uid } from "../../utils/helpers";
@@ -211,6 +212,55 @@ export function SelectionToolbar({ doc }: { doc: Document }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Paged canvas (plan 10 §3: docx/md/txt render as pages, not one block) */
+/* ------------------------------------------------------------------ */
+
+/** Virtual page budget — mirrors extract.SynthesizedPageSize on the Go side. */
+export const PAGE_BUDGET = 2000;
+
+function blockChars(block: DocumentBlock): number {
+  if (block.type === "list" && block.listItems?.length) {
+    return block.listItems.reduce((n, item) => n + item.reduce((m, s) => m + s.text.length, 0), 0);
+  }
+  return (block.segments ?? []).reduce((n, s) => n + s.text.length, 0);
+}
+
+/**
+ * Greedy pagination over canonical blocks. `page`-type blocks force a break
+ * (PDF never reaches this view, but the rule is harmless); headings join the
+ * following block instead of stranding alone. Pure — selection/highlights
+ * keep working because blocks keep their data-block-id wrappers.
+ */
+export function paginateBlocks(blocks: DocumentBlock[], budget = PAGE_BUDGET): DocumentBlock[][] {
+  const pages: DocumentBlock[][] = [];
+  let cur: DocumentBlock[] = [];
+  let used = 0;
+  const flush = () => {
+    if (cur.length > 0) pages.push(cur);
+    cur = [];
+    used = 0;
+  };
+  for (const b of blocks) {
+    if (b.type === "page") {
+      flush();
+      continue;
+    }
+    const cost = blockChars(b);
+    // A heading starts a fresh page when the current one is more than half
+    // full — never strand a heading at the bottom of a page.
+    if (cur.length > 0 && (used + cost > budget || (b.type === "heading" && used > budget / 2))) {
+      flush();
+    }
+    cur.push(b);
+    used += cost;
+  }
+  flush();
+  // Empty document = one empty page (editors/new files stay openable).
+  if (pages.length === 0) pages.push([]);
+  return pages;
+}
+
+/* ------------------------------------------------------------------ */
 /* View                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -218,6 +268,21 @@ export default function SourceDocumentView({ doc }: { doc: Document }) {
   const { state, dispatch } = useApp();
   const scrollRef = useRef<HTMLDivElement>(null);
   const meta = doc.metadata;
+
+  // Designate this document as the workspace summary: flips it editable
+  // (SummaryDocumentView) and makes it the AI merge/propose target.
+  // Without this, disk-opened files stay kind "source" and every summary
+  // edit path silently drops for lack of a target.
+  const makeSummary = () => {
+    const wsId = activeWorkspace(state)?.id ?? doc.workspaceId;
+    if (!wsId) {
+      dispatch({ type: "toast", message: "Open a workspace folder first." });
+      return;
+    }
+    dispatch({ type: "workspace.setPrimarySummary", workspaceId: wsId, summaryId: doc.id });
+    void setPrimarySummary(doc.id);
+    dispatch({ type: "toast", message: `"${doc.metadata.title}" is now the workspace summary` });
+  };
 
   const onMouseUp = () => {
     const sel = window.getSelection();
@@ -278,34 +343,53 @@ export default function SourceDocumentView({ doc }: { doc: Document }) {
   };
 
   return (
-    <div className="mx-auto max-w-[700px] px-8 py-6" onMouseDown={onMouseDown}>
+    <div className="mx-auto max-w-[760px] px-8 py-6" onMouseDown={onMouseDown}>
       <div className="mb-4 flex items-center justify-between border-b border-line pb-2.5 text-[12px] text-mute">
         <span className="truncate">
           {meta.author ? `${meta.author} · ` : ""}
           {meta.title}
         </span>
-        {meta.pageCount && (
-          <span className="shrink-0 pl-3">
-            Page {doc.currentPage ?? 1} of {meta.pageCount}
-          </span>
-        )}
+        <span className="flex shrink-0 items-center gap-3 pl-3">
+          <button
+            type="button"
+            onClick={makeSummary}
+            title="Make this document the workspace summary (editable, AI edit target)"
+            className="rounded-full border border-line-soft px-2.5 py-0.5 text-[10.5px] text-mute hover:border-iris-300 hover:text-iris-700"
+          >
+            Make summary
+          </button>
+          {meta.pageCount && (
+            <span>
+              Page {doc.currentPage ?? 1} of {meta.pageCount}
+            </span>
+          )}
+        </span>
       </div>
 
       <h1 className="mb-6 font-serif text-[28px] font-bold leading-tight text-ink-900">{meta.title}</h1>
 
       <div
         ref={scrollRef}
-        data-doc-area
-        className="select-text"
+        className="space-y-6"
         onMouseUp={onMouseUp}
         onScroll={() => {
           if (state.selection?.documentId === doc.id) dispatch({ type: "selection.set", selection: null });
         }}
       >
-        {doc.blocks.map((block) => (
-          <div key={block.id} data-block-id={block.id} id={`blk-${block.id}`}>
-            <BlockText block={block} docId={doc.id} />
-          </div>
+        {paginateBlocks(doc.blocks).map((page, i, arr) => (
+          <section
+            key={i}
+            data-doc-area
+            aria-label={`Page ${i + 1} of ${arr.length}`}
+            className="select-text rounded-sm border border-line-soft bg-white px-8 py-6 shadow-sm"
+          >
+            {page.map((block) => (
+              <div key={block.id} data-block-id={block.id} id={`blk-${block.id}`}>
+                <BlockText block={block} docId={doc.id} />
+              </div>
+            ))}
+            <p className="mt-6 text-center text-[10.5px] text-mute">— {i + 1} —</p>
+          </section>
         ))}
         <p className="mt-10 flex items-center gap-2 border-t border-line-soft pt-4 text-[11.5px] text-mute">
           <Icon name="info" size={12} />

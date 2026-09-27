@@ -7,32 +7,40 @@
 | App shell, mode switch, top bar | **WORKING** | `src/App.tsx` |
 | Browser UI (sessions, tabs, address bar, navigation, mock pages, search page, new tab) | **WORKING** (navigation real, page content mock) | `src/features/browser/` |
 | Reader UI (subtabs, document info, TOC, file tree, AI panels, resize/collapse) | **WORKING** (tree moved to Library view; Documents panel slimmed) | `src/features/reader/` |
-| Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / MOCK tree in browser** | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
-| `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/services/documents.go:OpenFile` |
-| Open-failure reporting | **MISSING — all failures collapse to mock fallback** (see `tasks.md` §1.2) | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
+| Folder pick → library tree (recursive walk, path tokens, locate-in-tree) | **WORKING in desktop build / null in browser** (focus-refresh keeps it live; open focuses existing tab) | `frontend/app.go:SelectFolder`, `backend/services/filesystem.go:walkDir`, `ReaderSidebar.tsx` LibraryPanel |
+| `.txt`/`.md` file open (real bytes → blocks → tab) | **WORKING in desktop build** (2 MiB / 1000-block caps) | `App.OpenFile`, `backend/extract/extract.go:OpenFile` |
+| Empty/new files (0-byte any supported type) | **WORKING — open as blank pages, never errors** | `backend/extract` `emptyDocument`, `empty_test.go` |
+| Open-failure reporting | **WORKING — typed reasons, honest toasts, no mock fallback** | `backend.ts:openFile`, `ReaderMode.tsx:openFile` |
 | Stale tabs on folder switch | **BUG, not started** (see `tasks.md` §1.1) | `Filesystem.root`, `metadata.path` |
 | Chosen-folder persistence across restarts | **MISSING** (memory only) | `backend/services/workspace.go:Save` |
 | Multi-session source→summary tracking | **DESIGN NOTE only** (first-summary-wins today, see `tasks.md` §2) | `aiController.ts:122` |
 | Application state (reducer, selectors, persistence-ready model) | **WORKING** | `src/state/appState.tsx` |
 | Domain types (sessions/sources/documents/changes/activities) | **WORKING** | `src/types/domain.ts` |
-| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/services/ai/` |
-| AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/services/ai.go` |
+| AI provider boundary + streaming UI (phases, activity tracking, history) | **WORKING** (Gemini/Groq/OpenRouter via Go; cost class + semaphore + explain cache; usage meters in Settings) | `src/services/ai.ts`, `backend/ai/` |
+| AI responses (explanations, insertions, revisions) | **REAL** (failures surface as UI errors, no mock fallback) | `backend/ai/service.go` |
 | AI web-search ranking (browser) | **NOT CONNECTED** (honest error, by design) | `GeminiAIService.Run` |
 | Selection → AI action workflow | **WORKING** (block anchor + range offsets) | `DocumentView.tsx` |
 | Highlights / saved notes | **WORKING** (block-anchored; range-precise spans where measured) | `doc.highlight.add` |
-| Summary document editing | **WORKING** (Slate; pending modifies inline, deletes/inserts card-based; gated autosave to DOCX) | `SummaryDocumentView.tsx` |
+| Summary document editing | **WORKING** (direct paginated canvas; blur-commit + Enter-split; gated autosave to DOCX) | `SummaryDocumentView.tsx` (`DocxCanvas`) |
 | AI change proposals (insert/modify/delete, accept/reject/inspect/revise) | **WORKING** (tool + chat driven; user gatekeeps every change) | `change.*` actions |
 | Chat `@doc` targeting + region selection | **WORKING** (`mentionIds` + selection anchor; autocomplete in composer) | `state/mentions.ts`, `aiController.runChat` |
+| Unified workspace chat (one thread per folder + New chat) | **WORKING** (thread identity = workspaceId) | `aiController.ensureThread/newThread`, `AIReadingPanel.tsx`, `docs/plans/09-unified-workspace-chat.md` |
+| Chat thread persistence + history load + switcher | **WORKING in desktop** (best-effort save/append; SQLite load on folder switch) | `backend.ts` chat helpers, `ReaderMode.pickFolder` |
+| Chat thinking trace (expandable tool log per turn) | **WORKING** (timed dispatches; persisted `tool_trace` column with migration) | `ai/chat.go`, `AIReadingPanel.tsx` |
+| Workspace summary designation | **WORKING** (Make-summary button flips kind + persists primary) | `DocumentView.tsx`, `reduceWorkspace.ts` |
 | Source → summary provenance (`sourceIds`, cited-sources list) | **WORKING** | `summary.addSource` |
 | Source preview / save / send-to-reader | **WORKING** | `AIBrowsePanel.tsx` |
 | Browser engine (real web content) | **PLACEHOLDER** (integration boundary) | `MockWebPage.tsx` |
-| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/services/pdf.go`, `documents.go` |
-| Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + `.txt` extraction real; storage + AI mock** | `backend/services/` |
+| PDF / DOCX rendering & extraction | **WORKING** (pdf: Go text-layer extract + canvas leaf w/ text layer; docx: stdlib extract + Save; scanned PDFs out of scope) | `PdfView.tsx`, `backend/extract/pdf.go`, `extract.go` |
+| Go backend services | **PARTIAL: filesystem walk/reveal/resolve + workspace library tree + extraction real; AI + storage live, sources/workspace metadata mocked** | `backend/{extract,tools,usage,ai,services}/` |
 | Wails wiring (bindings, events, embed) | **WORKING for library+filesystem** (`WailsFilesystem`/`WailsLibrary` in `backend.ts`); AI events + storage unwired | `frontend/app.go`, `frontend/main.go`, root `main.go` (thin router) |
 | SQLite persistence | **BOUNDARY READY / not implemented** (in-memory today) | `backend/services/storage.go` |
 | Rich formatting in summaries (bold/italic/lists) | **FUTURE** | editor upgrade |
-| Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx`, `slateAdapter.ts` |
-| Skills / workflows / parallel APIs | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§1–3 |
+| Character-range selection & diffs | **PARTIAL** (block-text offsets live; PDF text-layer coords need a pdf.js leaf) | `DocumentView.tsx` |
+| Skills / workflows / parallel APIs | **PARTIAL** (loader + `summarize-source` starter + prompt wiring + `workflows/` runner with `run_workflow` landed; more starters + ledger planned) | `backend/skills/`, `backend/workflows/`, `docs/plans/11-skills-workflows-and-split.md` (was `08` §§1–3) |
+| Summary mirrors + paged canvas + revise-with-context | **WORKING** (`.work/` mirrors, `paginateBlocks` pages, focused revise both ends) | `backend/mirror/`, `DocumentView.tsx`, `docs/plans/10-live-library-and-intermediates.md` |
+| Live publish + in-file diff review | **WORKING** (`publish_summary` writes mapped `.docx`, auto-publishes forgotten turns; auto-reload decorates diffs; accept/reject/instruction in-file) | `backend/tools/`, `extract.BlocksFromMarkdown`, `SummaryDocumentView.tsx`, `docs/plans/11-skills-workflows-and-split.md` |
+| Summary editing surface | **WORKING** (direct paginated canvas, no Slate; blur-commit + Enter-split; right-click diff menu) | `SummaryDocumentView.tsx` (`DocxCanvas`) |
 | Chat observability (tokens, model names, tool trace, logs DB) | **PROPOSAL** (usage + audit rings exist in memory; persistence + UI pending) | `docs/plans/08-operations-growth.md` §§4–5 |
 | CI + releases (tags, installer drive choice, portable zip) | **PROPOSAL** | `docs/plans/08-operations-growth.md` §§6–7 |
 | Bookmarking pages, collections, workspace library content | **FUTURE** (UI placeholders exist) | sidebar views |
@@ -53,7 +61,8 @@
 
 ## Replacing mock data
 
-`src/mock/data.ts` is the seed for the in-memory state. Once storage exists,
-`createInitialState()` becomes "defaults + load from backend" — the loader
-calls `backend.*` (already promise-based) and dispatches the same actions.
-Keep the file as fixtures for tests until the real corpus replaces it.
+`src/mock/` is deleted: there is no seed corpus. `createInitialState()` in
+`state/appState.tsx` returns empty chrome (one blank browser tab, empty
+reader). Once storage exists it becomes "defaults + load from backend" —
+the loader calls `backend.*` (already promise-based) and dispatches the
+same actions.

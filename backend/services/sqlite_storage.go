@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role          TEXT NOT NULL,
   content       TEXT NOT NULL,
   document_id   TEXT NOT NULL DEFAULT '',
+  tool_trace    TEXT NOT NULL DEFAULT '',
   created_at    INTEGER NOT NULL,
   FOREIGN KEY (thread_id) REFERENCES chat_threads(id) ON DELETE CASCADE
 );
@@ -112,7 +113,17 @@ CREATE TABLE IF NOT EXISTS extract_cache (
 );
 `
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Additive migrations for pre-existing DBs (IF NOT EXISTS never alters).
+	// Each ALTER is best-effort: "duplicate column" means already migrated.
+	for _, mig := range []string{
+		`ALTER TABLE chat_messages ADD COLUMN tool_trace TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, _ = s.db.Exec(mig)
+	}
+	return nil
 }
 
 // extractCacheCap bounds the cache on low-spec machines (issue 26).
@@ -345,8 +356,8 @@ func (s *SQLiteStorage) AppendMessage(msg ChatMessageRecord) error {
 		msg.CreatedAt = time.Now().UnixMilli()
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO chat_messages(id, thread_id, role, content, document_id, created_at) VALUES(?, ?, ?, ?, ?, ?)`,
-		msg.ID, msg.ThreadID, msg.Role, msg.Content, msg.DocumentID, msg.CreatedAt,
+		`INSERT INTO chat_messages(id, thread_id, role, content, document_id, tool_trace, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID, msg.ThreadID, msg.Role, msg.Content, msg.DocumentID, msg.ToolTrace, msg.CreatedAt,
 	)
 	if err != nil {
 		return err
@@ -392,7 +403,7 @@ func (s *SQLiteStorage) ListThreads(workspaceID string) ([]ChatThreadRecord, err
 
 func (s *SQLiteStorage) ListMessages(threadID string) ([]ChatMessageRecord, error) {
 	rows, err := s.db.Query(
-		`SELECT id, thread_id, role, content, document_id, created_at FROM chat_messages
+		`SELECT id, thread_id, role, content, document_id, tool_trace, created_at FROM chat_messages
 		 WHERE thread_id = ? ORDER BY created_at ASC`,
 		threadID,
 	)
@@ -403,7 +414,7 @@ func (s *SQLiteStorage) ListMessages(threadID string) ([]ChatMessageRecord, erro
 	var out []ChatMessageRecord
 	for rows.Next() {
 		var m ChatMessageRecord
-		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.DocumentID, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.DocumentID, &m.ToolTrace, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

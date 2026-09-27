@@ -34,6 +34,18 @@ export function reducePart3(state: AppState, action: Action): AppState | null {
         blocks: action.blocks,
       }));
 
+    case "doc.diffs.set":
+      return patchDoc(state, action.documentId, (doc) => ({
+        ...doc,
+        diffs: action.diffs,
+      }));
+
+    case "doc.diffs.dismiss":
+      return patchDoc(state, action.documentId, (doc) => ({
+        ...doc,
+        diffs: (doc.diffs ?? []).filter((d) => d.id !== action.diffId),
+      }));
+
     case "doc.title":
       return patchDoc(state, action.documentId, (doc) => ({
         ...doc,
@@ -86,22 +98,6 @@ export function reducePart3(state: AppState, action: Action): AppState | null {
       return {
         ...next,
         changes: { ...next.changes, [action.id]: { ...change, status: action.status } },
-      };
-    }
-
-    case "change.revise": {
-      const change = state.changes[action.id];
-      if (!change) return state;
-      return {
-        ...state,
-        changes: {
-          ...state.changes,
-          [action.id]: {
-            ...change,
-            newContent: action.newContent,
-            highlightFragment: action.highlightFragment ?? change.highlightFragment,
-          },
-        },
       };
     }
 

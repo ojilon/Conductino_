@@ -15,6 +15,7 @@ import type {
   WorkspaceSession,
   ChatMessage,
   ChatThread,
+  SummaryDiff,
 } from "../types/domain";
 
 export type Action =
@@ -52,9 +53,11 @@ export type Action =
   | { type: "doc.blocks.replace"; documentId: ID; blocks: DocumentBlock[] }
   | { type: "doc.title"; documentId: ID; text: string }
   | { type: "doc.highlight.add"; documentId: ID; highlight: Highlight }
+  // in-file publish diffs (ephemeral review state over live blocks)
+  | { type: "doc.diffs.set"; documentId: ID; diffs: SummaryDiff[] }
+  | { type: "doc.diffs.dismiss"; documentId: ID; diffId: ID }
   | { type: "change.propose"; change: DocumentChange; block?: DocumentBlock; afterBlockId?: ID }
   | { type: "change.decide"; id: ID; status: "accepted" | "rejected" }
-  | { type: "change.revise"; id: ID; newContent: string; highlightFragment?: string }
   | { type: "summary.addSource"; documentId: ID; sourceId: ID }
   // workspace (Phase 2)
   | { type: "workspace.ensure"; session: WorkspaceSession }

@@ -84,4 +84,28 @@ func TestSQLiteRoundTrip(t *testing.T) {
 	if v, ok := s.GetSetting("last_library_root"); !ok || v != dir {
 		t.Fatalf("setting %q %v", v, ok)
 	}
+	// Thinking trace survives the round trip (chat "thinking" log).
+	trace := `[{"tool":"read_source","ok":true,"ms":12}]`
+	_ = s.UpsertThread(ChatThreadRecord{ID: "t1", WorkspaceID: "ws1", Title: "chat"})
+	_ = s.AppendMessage(ChatMessageRecord{ID: "m-trace", ThreadID: "t1", Role: "assistant", Content: "done", ToolTrace: trace})
+	msgs, err := s.ListMessages("t1")
+	if err != nil || len(msgs) != 1 || msgs[0].ToolTrace != trace {
+		t.Fatalf("trace round trip: %+v %v", msgs, err)
+	}
+}
+
+func TestExtractCacheRoundTrip(t *testing.T) {
+	s := NewStorage()
+	e := CachedExtract{Path: "root\x00a.txt", Mtime: 1, Size: 5, Title: "a", BlocksJSON: `{"blocks":[]}`}
+	if err := s.PutCachedExtract(e); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetCachedExtract(e.Path, 1, 5)
+	if err != nil || got == nil || got.Title != "a" {
+		t.Fatalf("cache hit: %+v err=%v", got, err)
+	}
+	// mtime change invalidates.
+	if got, _ := s.GetCachedExtract(e.Path, 2, 5); got != nil {
+		t.Fatalf("stale entry returned: %+v", got)
+	}
 }

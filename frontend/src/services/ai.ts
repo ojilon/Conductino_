@@ -6,7 +6,7 @@
  * `getAIProvider()`.
  *
  * The single implementation is `WailsAIProvider`: a thin wrapper over the
- * Go backend (`backend/services/ai.go`, a Gemini-backed AIService). A call
+ * Go backend (`backend/ai/`, a Gemini-backed AIService). A call
  * goes TS → bound `App.StreamAIRequest` → Go runs the model → progress and
  * results come back as `AIEvent`s on the shared "ai://event" channel, which
  * this file demultiplexes back to the originating caller by `requestId`.
@@ -50,6 +50,8 @@ interface GoAIRequest {
   /** Phase 5 tools. */
   summaryContent?: string;
   primarySummaryId?: string;
+  /** Workspace-relative summary path token — publish_summary writes ONLY here. */
+  summaryPath?: string;
   /** Resolved @doc mentions (document ids). */
   mentionIds?: string[];
   /** Focused pending proposal for chat-targeted revise. */
@@ -185,6 +187,7 @@ class WailsAIProvider implements AIProvider {
         mode: request.mode,
         summaryContent: request.summaryContent,
         primarySummaryId: request.primarySummaryId,
+        summaryPath: request.summaryPath,
         mentionIds: request.mentionIds,
         focusedChange: request.focusedChange,
         requestId,

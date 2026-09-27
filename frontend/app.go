@@ -221,3 +221,14 @@ func (a *App) ListMessages(threadID string) ([]services.ChatMessageRecord, error
 func (a *App) LoadPrimarySummary(workspaceID string) (*services.DocumentRecord, error) {
 	return a.backend.LoadPrimarySummary(workspaceID)
 }
+
+// BuildContextPack assembles a budgeted context string server-side
+// (plan 11 §4). rangeStart/rangeEnd are UTF-16 offsets, -1 = no range.
+func (a *App) BuildContextPack(blocksJSON, title, blockID, selText string, rangeStart, rangeEnd, windowBlocks int, includeOutline bool) (string, error) {
+	return a.backend.BuildContextPack(blocksJSON, title, blockID, selText, rangeStart, rangeEnd, windowBlocks, includeOutline)
+}
+
+// MatchSkills returns skill excerpts for an operation+intent as JSON.
+func (a *App) MatchSkills(operation, intent string) (string, error) {
+	return a.backend.MatchSkills(operation, intent)
+}

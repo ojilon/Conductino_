@@ -1,6 +1,6 @@
 # Lumen — AI integration
 
-> **Where does the real AI live?** → `backend/services/ai.go`
+> **Where does the real AI live?** → `backend/ai/`
 > (`GeminiAIService`, key from `GEMINI_API_KEY` env or git-ignored
 > `backend/.ai.env`). The frontend calls it through `WailsAIProvider`
 > (`src/services/ai.ts` → `App.StreamAIRequest` → `"ai://event"`).
@@ -53,7 +53,7 @@ reading companion, propose `DocumentChange`s, or revise pending changes.
 
 ## Go-side provider (live)
 
-`backend/services/ai.go` implements `AIService` as `GeminiAIService`
+`backend/ai/service.go` implements `AIService` as `GeminiAIService`
 (stdlib `net/http` against `generateContent`, model in
 `defaultGeminiModel`): `Run(ctx, req, sink)` emits `phase` progress, then
 exactly one terminal event — `done` with JSON `{ explanation | insertion |
@@ -112,6 +112,6 @@ Every `run()` starts with a `AIActivity` record (`state/aiController.ts` →
 There is no mock provider anymore. Missing key, network failure, empty model
 response, unknown operation, and browser-mode use (no desktop bridge) all
 reach the UI as `onError`, rendered where the answer was expected
-("AI unavailable now." / explicit toasts) — see `aiController.ts`. The
-seeded demo documents in `src/mock/data.ts` are untouched startup content,
-not an AI fallback.
+("AI unavailable now." / explicit toasts) — see `aiController.ts`. The app
+starts empty (no seeded documents) — the initial state in `appState.tsx`
+is blank chrome, not an AI fallback.

@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
-import { backend, type OpenedFile } from "../../services/backend";
+import { backend, loadWorkspaceThreads, type OpenedFile } from "../../services/backend";
 import { EmptyState, ResizablePanel } from "../../components/ui";
 import { Icon } from "../../components/icons";
 import { isStaleRoot, uid } from "../../utils/helpers";
@@ -72,6 +72,23 @@ export default function ReaderMode() {
     };
   }, []);
 
+  // Files created/renamed outside the app (explorer, another program) must
+  // appear without a manual refresh: re-list when the window regains focus.
+  // Visible-only guard keeps background tabs from walking large folders.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let pending = false;
+    const onFocus = () => {
+      if (document.visibilityState !== "visible" || pending) return;
+      pending = true;
+      refreshTree().finally(() => {
+        pending = false;
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshTree]);
+
   const pickFolder = useCallback(async () => {
     const picked = await backend.filesystem.selectFolder().catch(() => null);
     if (picked == null) {
@@ -97,6 +114,15 @@ export default function ReaderMode() {
       },
     });
     dispatch({ type: "workspace.setActive", id: wsId });
+    // Thread history (plan 09 §3): restore this workspace's chats from
+    // SQLite (latest first) so the conversation survives restarts. In-memory
+    // threads win on id collision; browser mode loads nothing.
+    loadWorkspaceThreads(wsId)
+      .then((threads) => {
+        for (const t of threads) dispatch({ type: "chat.ensure", thread: t });
+        if (threads.length > 0) dispatch({ type: "chat.setActive", id: threads[0].id });
+      })
+      .catch(() => {});
     dispatch({ type: "toast", message: `Library: ${picked}` });
   }, [refreshTree, dispatch]);
 
@@ -113,6 +139,19 @@ export default function ReaderMode() {
   );
 
   const openFile = async (node: FileTreeNode & { path: string }) => {
+    // Already open? Focus the existing tab — never a duplicate tab.
+    // Match by path token + opening root, so a same-named file from another
+    // folder still opens fresh (stale-root guard, tasks.md §1.1).
+    const openTabId = session.tabIds.find((t) => {
+      const d = state.documents[state.reader.tabs[t]?.documentId ?? ""];
+      if (!d || d.metadata.path !== node.path) return false;
+      const root = d.metadata.rootPath;
+      return !root || !currentRoot || root === currentRoot;
+    });
+    if (openTabId) {
+      dispatch({ type: "reader.tab.select", tabId: openTabId });
+      return;
+    }
     if (node.documentId) {
       const existingTab = session.tabIds.find((t) => state.reader.tabs[t]?.documentId === node.documentId);
       if (existingTab) {

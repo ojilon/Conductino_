@@ -119,8 +119,8 @@ provider, model, tokens, latency, status, error class), `tool_audit`
 * **Learning tests** (for you): keep a `*_test.go` + `*.test.ts` style of
   small table tests with plain-English names (`TestReadSourceTypoSuggests`,
   `resolveMentions-accent folding`, …). Reading order if new to Go tests:
-  `ai/tools_test.go` (table + fakes) → `services/blockids_test.go`
-  (property-style: stability) → `ai/policy_test.go` (cache/semaphore).
+  `tools/tools_test.go` (table + fakes) → `extract/ids_test.go`
+  (property-style: stability) → `usage/policy_test.go` (cache/semaphore).
   Every new behavior ships with one such test — that *is* the CI contract.
 
 ## 7. Releases — tags, packaging, install location
