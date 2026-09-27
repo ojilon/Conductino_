@@ -3,10 +3,9 @@ package services
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 
+	"Conductino/backend/apppaths"
 	"Conductino/backend/models"
 )
 
@@ -300,17 +299,11 @@ func (s *InMemoryStorage) PutCachedExtract(e CachedExtract) error {
 /* Open helpers                                                        */
 /* ------------------------------------------------------------------ */
 
-// DefaultDBPath returns the app-data path for conductino.db.
-// Override with CONDUCTINO_DB.
+// DefaultDBPath returns the app-data path for conductino.db via the
+// single path resolver (backend/apppaths). Override with CONDUCTINO_DB
+// (file only) or CONDUCTINO_DATA (whole app-data root).
 func DefaultDBPath() string {
-	if p := os.Getenv("CONDUCTINO_DB"); p != "" {
-		return p
-	}
-	dir, err := os.UserConfigDir()
-	if err != nil || dir == "" {
-		dir = os.TempDir()
-	}
-	return filepath.Join(dir, "Conductino", "conductino.db")
+	return apppaths.DBPath()
 }
 
 // OpenDefaultStorage prefers SQLite; falls back to in-memory on open failure.

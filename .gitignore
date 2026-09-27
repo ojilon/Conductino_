@@ -11,3 +11,22 @@ backend/.ai.env
 *.env
 # Summary .md scratch mirrors (plan 10 §2) — debuggable, wipable, never committed.
 backend/.work/
+# Repo-local debug data root (docs/release-prep/04). README + .gitkeeps are
+# committed; mirrors, cache, skills staging, and SQLite files are not.
+.dev-data/work/*
+!.dev-data/work/.gitkeep
+.dev-data/cache/*
+!.dev-data/cache/.gitkeep
+.dev-data/skills/*
+!.dev-data/skills/.gitkeep
+.dev-data/*.db*
+# Portable data dir next to the exe + built installers (CI uploads these as
+# Release assets; they never live in git).
+data/
+*.exe
+*.msi
+build/bin/
+# Generated per `wails build -nsis` run (WebView2 bootstrapper + resolved macros).
+build/windows/installer/wails_tools.nsh
+build/windows/installer/tmp/
+

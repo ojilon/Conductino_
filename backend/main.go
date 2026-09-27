@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/apppaths"
 	"Conductino/backend/extract"
 	"Conductino/backend/mirror"
 	"Conductino/backend/models"
@@ -40,6 +41,9 @@ func NewBackend() *Backend {
 }
 
 func (b *Backend) Init(ctx context.Context) error {
+	if err := apppaths.EnsureDataRoot(); err != nil {
+		fmt.Printf("appdata init: %v\n", err)
+	}
 	if err := b.storage.Init(ctx); err != nil {
 		return err
 	}

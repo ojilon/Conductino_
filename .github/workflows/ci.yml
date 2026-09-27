@@ -1,0 +1,55 @@
+# Continuous tests — every PR / push. No releases, no binaries uploaded.
+#
+# Mirrors docs/release-prep/07-tests-local-and-ci.md: the same commands run
+# locally and here. If CI is red, the tag workflow (release.yml) refuses to
+# publish. Frontend tests (pnpm test) join this file once Vitest exists.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feature/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install frontend deps (frozen lockfile)
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Frontend typecheck
+        run: pnpm --dir frontend exec tsc --noEmit
+
+      # Frontend build BEFORE any Go step: frontend/main.go embeds
+      # frontend/dist (//go:embed all:dist), which is gitignored and only
+      # exists after this build. go vet/test compile that package, so on a
+      # fresh runner they fail with "pattern all:dist: no matching files"
+      # when run first.
+      - name: Frontend production build
+        run: pnpm --dir frontend build
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests
+        run: go test ./...
