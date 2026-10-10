@@ -29,12 +29,13 @@
 | 11. Rust (non-GC) | `journey/11-rust/` | Why Rust, safety, Go↔Rust bridge, what moves where |
 | 12. Rewrite playbooks | `journey/12-playbooks/` | Checklists, exercises, review gates per track |
 
-## Old docs (kept as history, superseded by journey)
+## Old docs (archived as history, superseded by journey)
 
-- `architecture.md`, `state-model.md`, `ai-integration.md`, `document-rendering.md`,
-  `future-work.md` — snapshot of AI-built system. Read only after `01-maps/`.
-- `plans/` — 00–12 plan files that drove the AI implementation. Historical.
-- `release-prep/` — 01–05 versioning/storage/installer notes. Absorbed into `08-release/`.
+- `archive/architecture.md`, `archive/state-model.md`, `archive/ai-integration.md`,
+  `archive/document-rendering.md`, `archive/future-work.md` — snapshot of AI-built system.
+  Read only after `journey/01-maps/`.
+- `archive/plans/` — 00–12 plan files that drove the AI implementation. Historical.
+- `archive/release-prep/` — 01–05 versioning/storage/installer notes. Absorbed into `journey/08-release/`.
 - `tasks.md` (repo root) — bug inventory that motivated typed failures. Still referenced by file:line.
 
 ## Conventions used in every journey file
