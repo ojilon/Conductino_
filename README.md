@@ -12,11 +12,17 @@ summary with reviewed AI changes).
 > items: stale-tab handling on folder switch is tag-and-warn only, browser
 > engine is still mocked, scanned PDFs are out of scope.
 >
-> **Current planning source of truth:** `docs/plans/README.md` and
-> `docs/plans/00-current-priorities.md`. **First concrete work:**
-> `docs/release-prep/` (tags, installer with drive choice, local storage).
-> Older phase docs remain historical. Read the active plans before changing
-> `backend/` or the reader sidebar.
+> **Current planning source of truth:** `docs/journey/README.md` (your 2-month
+> owner-led rewrite guide, 200+ files) + `docs/README.md` (master index).
+> Older AI-built planning docs are archived under `docs/archive/plans/` and
+> `docs/archive/release-prep/` — history only, not instructions. Read the
+> journey maps (`docs/journey/01-maps/`) before changing `backend/` or the
+> reader sidebar.
+>
+> **Step 3 landed on this branch:** heavy/non-network split started —
+> `backend/bridge/` contract + `backend/internal/heavy/` pure txt/md parser
+> with parity test (`TestTextPathsAgree`), old dispatch untouched. See
+> `docs/journey/10-split/12-step3-wiring.md`.
 
 ## Quick start
 
@@ -60,7 +66,11 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
   `pdf.go` (extraction dispatch; `.txt`/`.md`/`.docx`/`.pdf` real, rest typed
   `ErrUnsupportedType`), `blockids.go` (stable content-addressed block IDs),
   `storage.go` + `sqlite_storage.go` (SQLite default, in-memory fallback;
-  includes the `extract_cache` table). `backend/models/` mirrors the TS domain types.
+   includes the `extract_cache` table). `backend/models/` mirrors the TS domain types.
+   `backend/bridge/` is the narrow heavy↔network contract (versioned,
+   JSON-ready for a future Rust sidecar); `backend/internal/heavy/` holds pure
+   non-network parsing (txt/md today, parity-tested); `backend/internal/netops/`
+   documents what stays network.
 - `backend/services/ai/` — real provider package: `service.go` (failover
   orchestration), `backend.go` + `openai_compat.go` (Gemini/Groq/OpenRouter),
   `policy.go` (cost classes, semaphore, explain cache), `usage.go` (meters),
@@ -96,18 +106,20 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
 
 | Question | Doc |
 |---|---|
-| **What do we build next? (ordered)** | **`docs/plans/00-current-priorities.md`** + **`docs/plans/README.md`** |
-| **First concrete work (tags, installer, local storage, D: drive)** | **`docs/release-prep/`** |
-| Intermediate documents (mirrors, meta, edit tracking) | `docs/plans/09-intermediate-documents.md` |
-| Skills, workflows, dynamic guidance | `docs/plans/10-skills-and-workflows.md` |
-| AI tools, jail, Python helpers, thinking events | `docs/plans/11-ai-surface-and-tools.md` |
-| Live AI ↔ frontend reflection | `docs/plans/12-bidirectional-reflection.md` |
-| What is broken / missing (file:line inventory) | `tasks.md` (still useful; cross-check with active plans) |
-| How is the app structured? Layers? | `docs/architecture.md` |
-| Where does document state live? | `docs/state-model.md` (will track intermediates as they land) |
-| AI API plug-in points | `docs/ai-integration.md` |
-| PDF / DOCX rendering | `docs/document-rendering.md` |
-| Implemented vs mocked | `docs/future-work.md` |
+| **Where do I start my rewrite journey?** | **`docs/journey/README.md`** + **`docs/README.md`** (master index) |
+| **How does data flow / which layer owns what?** | **`docs/journey/01-maps/`** (repo tour, 7 layers, every transfer) |
+| Learning Go via this repo | `docs/journey/02-go/` |
+| Learning TS/HTML/CSS via this repo | `docs/journey/03-ts/` |
+| Lightening the frontend (React → TS, canvas) | `docs/journey/04-frontend/` |
+| Backend services + heavy/network split + bridge | `docs/journey/05-backend/` + `docs/journey/10-split/` (wiring: `docs/journey/10-split/12-step3-wiring.md`) |
+| AI tooling, jail, thinking events | `docs/journey/06-ai/` |
+| Mirrors + intermediate documents | `docs/journey/07-mirrors/` |
+| Releases, serious installer, self-update loop | `docs/journey/08-release/` |
+| Using APIs well (budgets, failover, meters) | `docs/journey/09-apis/` |
+| Rust sidecar plan (non-GC heavy work) | `docs/journey/11-rust/` |
+| Rewrite playbooks + review gates G1–G4 | `docs/journey/12-playbooks/` |
+| What is broken / missing (file:line inventory) | `tasks.md` (still useful; cross-check with journey maps) |
+| Archived AI-built docs (history only) | `docs/archive/` (`architecture.md`, `state-model.md`, `ai-integration.md`, `document-rendering.md`, `future-work.md`, `plans/`, `release-prep/`) |
 
 ## Status in one line
 
