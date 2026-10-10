@@ -4,9 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"Conductino/backend/extract"
 )
 
 // Both txt paths must agree on the same corpus file (split safety net).
+// Legacy side goes through the canonical public entry (extract.Documents.OpenFile
+// dispatch), not an internal helper — so the test guards the real serving path.
 func TestTextPathsAgree(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "notes.md")
@@ -14,7 +18,7 @@ func TestTextPathsAgree(t *testing.T) {
 	if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a, err := openTextFile(p, "notes.md")
+	a, err := extract.NewDocuments().OpenFile(p, "notes.md")
 	if err != nil {
 		t.Fatalf("legacy path: %v", err)
 	}
