@@ -5,14 +5,24 @@ Two application modes — **Browser** (research sessions with page tabs + AI Bro
 (document subtabs, PDF canvas + text views, AI chat with `@doc` targeting, editable research
 summary with reviewed AI changes).
 
-> **Stability note:** mid-migration; parts are unstable by design. Folder-open /
-> library / extraction use typed failures (no mock fallback); chosen folder
-> persists; summary path uses mirrors + tools/skills/workflows on the harness tip.
+> **Stability note:** this project is mid-migration and parts are unstable by
+> design. The folder-open / library / extraction pipe is wired with typed
+> failure reasons (no mock fallback); the chosen folder persists across
+> restarts; summaries edit in Slate with user-gated AI proposals. Known open
+> items: stale-tab handling on folder switch is tag-and-warn only, browser
+> engine is still mocked, scanned PDFs are out of scope.
 >
-> **Planning source of truth on this line of work:**
-> `docs/plans/00-current-priorities.md` + `docs/plans/README.md`.
-> **Next foundation:** `docs/release-prep/` (tags, installer drive choice, local storage).
-> Prefer those over older phase lists when they conflict. `tasks.md` remains useful for file-level bugs.
+> **Current planning source of truth:** `docs/journey/README.md` (your 2-month
+> owner-led rewrite guide, 200+ files) + `docs/README.md` (master index).
+> Older AI-built planning docs are archived under `docs/archive/plans/` and
+> `docs/archive/release-prep/` — history only, not instructions. Read the
+> journey maps (`docs/journey/01-maps/`) before changing `backend/` or the
+> reader sidebar.
+>
+> **Step 3 landed on this branch:** heavy/non-network split started —
+> `backend/bridge/` contract + `backend/internal/heavy/` pure txt/md parser
+> with parity test (`TestTextPathsAgree`), old dispatch untouched. See
+> `docs/journey/10-split/12-step3-wiring.md`.
 
 ## Quick start
 
@@ -52,23 +62,16 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
   `Backend` aggregates one service instance and forwards to exactly one
   service per method.
 - `backend/services/` — `filesystem.go` (walk/reveal/resolve), `workspace.go`
-  (owns the library tree, composes `Filesystem`), `storage.go` +
-  `sqlite_storage.go` (SQLite default, in-memory fallback; includes the
-  `extract_cache` table), `ai_shim.go` + `extract_alias.go` (one-release
-  aliases, see plan 06). `backend/models/` mirrors the TS domain types
-  (`document.go` / `ai.go` / `storage.go` records).
-- `backend/extract/` — pure-Go extraction, no network: `extract.go`
-  (dispatch + typed errors), `text.go`, `docx.go`, `pdf.go`, `ids.go`
-  (stable content-addressed block IDs), `normalize.go` + `page.go`
-  (plan 07 windowed-reading stubs).
-- `backend/mirror/` — summary `.md` working copies (op log, re-sync; see plan 10).
-- `backend/tools/` — folder-scoped tools: `tools.go` (registry, dispatch,
-  catalog, audit), `paths.go` (Resolve jail + did-you-mean), `search.go`
-  (keyword search + caps). No model calls, no shell.
-- `backend/skills/` + `backend/workflows/` — skill loader + gated routines (plan 11).
-- `backend/usage/` — telemetry only: `usage.go` (meters, RPM rings),
-  `policy.go` (cost classes, semaphore, explain cache).
-- `backend/ai/` — network-only provider package: `service.go` (failover
+  (owns the library tree, composes `Filesystem`), `documents.go` + `docx.go` +
+  `pdf.go` (extraction dispatch; `.txt`/`.md`/`.docx`/`.pdf` real, rest typed
+  `ErrUnsupportedType`), `blockids.go` (stable content-addressed block IDs),
+  `storage.go` + `sqlite_storage.go` (SQLite default, in-memory fallback;
+   includes the `extract_cache` table). `backend/models/` mirrors the TS domain types.
+   `backend/bridge/` is the narrow heavy↔network contract (versioned,
+   JSON-ready for a future Rust sidecar); `backend/internal/heavy/` holds pure
+   non-network parsing (txt/md today, parity-tested); `backend/internal/netops/`
+   documents what stays network.
+- `backend/services/ai/` — real provider package: `service.go` (failover
   orchestration), `backend.go` + `openai_compat.go` (Gemini/Groq/OpenRouter),
   `chat.go` (multi-turn tool loop over `tools.ToolHost`), `prompts.go`.
   Keys live in Go only (env or git-ignored `backend/.ai.env`), never cross
@@ -99,16 +102,20 @@ Checks: `go vet ./...` + `go build ./...` from root; `pnpm exec tsc --noEmit` an
 
 | Question | Doc |
 |---|---|
-| **What next? (ordered)** | **`docs/plans/00-current-priorities.md`** + **`docs/plans/README.md`** |
-| **Tags, installer (D: drive), local storage, pre-release data root** | **`docs/release-prep/`** |
-| Mirrors, empty docs, page canvas | `docs/plans/10-live-library-and-intermediates.md` |
-| Skills, workflows, package split, thinking trace | `docs/plans/11-skills-workflows-and-split.md` |
-| File-level bugs / inventory | `tasks.md` |
-| Layers / architecture | `docs/architecture.md` |
-| Document state | `docs/state-model.md` |
-| AI API | `docs/ai-integration.md` |
-| PDF / DOCX rendering | `docs/document-rendering.md` |
-| Status table | `docs/future-work.md` |
+| **Where do I start my rewrite journey?** | **`docs/journey/README.md`** + **`docs/README.md`** (master index) |
+| **How does data flow / which layer owns what?** | **`docs/journey/01-maps/`** (repo tour, 7 layers, every transfer) |
+| Learning Go via this repo | `docs/journey/02-go/` |
+| Learning TS/HTML/CSS via this repo | `docs/journey/03-ts/` |
+| Lightening the frontend (React → TS, canvas) | `docs/journey/04-frontend/` |
+| Backend services + heavy/network split + bridge | `docs/journey/05-backend/` + `docs/journey/10-split/` (wiring: `docs/journey/10-split/12-step3-wiring.md`) |
+| AI tooling, jail, thinking events | `docs/journey/06-ai/` |
+| Mirrors + intermediate documents | `docs/journey/07-mirrors/` |
+| Releases, serious installer, self-update loop | `docs/journey/08-release/` |
+| Using APIs well (budgets, failover, meters) | `docs/journey/09-apis/` |
+| Rust sidecar plan (non-GC heavy work) | `docs/journey/11-rust/` |
+| Rewrite playbooks + review gates G1–G4 | `docs/journey/12-playbooks/` |
+| What is broken / missing (file:line inventory) | `tasks.md` (still useful; cross-check with journey maps) |
+| Archived AI-built docs (history only) | `docs/archive/` (`architecture.md`, `state-model.md`, `ai-integration.md`, `document-rendering.md`, `future-work.md`, `plans/`, `release-prep/`) |
 
 ## Status in one line
 
@@ -120,5 +127,9 @@ SQLite **default** · chosen folder **persisted**.
 ## Lightweight by design
 
 No Electron, no state library, no icon/font/animation frameworks beyond
-Tailwind + two Google fonts — targets a low-spec Windows machine.
-Offline packages stay stdlib-first where possible (`extract`, `tools`, `skills`, `mirror`, `usage`).
+Tailwind + two Google fonts, no diff engine — the scaffold targets a low-spec
+Windows machine (4 GB RAM, Celeron), and each integration landed additively:
+pdf.js canvas leaf, stdlib-only DOCX, pure-Go SQLite (`modernc.org/sqlite`),
+stdlib HTTP model clients (no vendor SDKs). Extraction library candidates
+were screened against this constraint — see `tasks.md` §4. cgo stays out
+until Go-side profiling says otherwise.
