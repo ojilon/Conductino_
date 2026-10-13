@@ -123,14 +123,25 @@ func DevSkillsDir() string {
 // CacheDir holds extracted-content cache spillover (SQLite is primary).
 func CacheDir() string { return filepath.Join(DataRoot(), "cache", "extract") }
 
+// TemporaryDir is the scratch home for in-progress work that must never be
+// committed and may be wiped any time (large-file chunking, debug dumps).
+// Example: <data>/temporary/extract_dump/*.json
+func TemporaryDir() string { return filepath.Join(DataRoot(), "temporary") }
+
+// ExtractDumpDir holds per-file extraction JSON dumps used while developing
+// the extraction pipeline (see backend/extract/dump.go). The extractor
+// creates it on demand with MkdirAll, so deleting it by hand never crashes
+// the app — the next dump just recreates it.
+func ExtractDumpDir() string { return filepath.Join(TemporaryDir(), "extract_dump") }
+
 // ConfigPath is the app-data config.json location.
 func ConfigPath() string { return filepath.Join(DataRoot(), "config.json") }
 
 // EnsureDataRoot creates the standard tree (root, work/summaries,
-// skills, cache). Best-effort callers ignore the error only in tests;
+// skills, cache, temporary/extract_dump). Best-effort callers ignore the error only in tests;
 // production Init must surface it in logs.
 func EnsureDataRoot() error {
-	for _, d := range []string{DataRoot(), WorkDir(), SummariesDir(), SkillsDir(), CacheDir()} {
+	for _, d := range []string{DataRoot(), WorkDir(), SummariesDir(), SkillsDir(), CacheDir(), TemporaryDir(), ExtractDumpDir()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}

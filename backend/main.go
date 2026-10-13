@@ -147,6 +147,14 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 			BlocksJSON: opened.BlocksJSON, PageCount: opened.PageCount,
 		})
 	}
+	// Debug dump (dev.bat sets CONDUCTINO_DUMP_EXTRACT=1): mirror the wire
+	// payload to <data>/temporary/extract_dump/<safe>.json. dataRoot "" means
+	// "resolve via apppaths" — so `wails dev` lands in .dev-data/temporary/
+	// and the installed app lands in Conductino_Data/temporary/. Best-effort:
+	// dumping must never fail an open.
+	if os.Getenv("CONDUCTINO_DUMP_EXTRACT") == "1" {
+		_, _ = extract.DumpExtractJSON("", path, opened.BlocksJSON)
+	}
 	return &opened, nil
 }
 

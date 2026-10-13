@@ -21,11 +21,17 @@ backend/.work/
 # Portable data dir next to the exe + built installers (CI uploads these as
 # Release assets; they never live in git).
 data/
+Conductino_Data/
 *.exe
 *.msi
 build/bin/
+# Our drive installer output (installer/dist/Conductino-vX.Y.Z-*.zip).
+installer/dist/*
+!installer/dist/.gitkeep
+# Extract-dump + temp scratch (dev sandbox only; real installs live under
+# Conductino_Data/ which is ignored wholesale above).
+.dev-data/temporary/*
+!.dev-data/temporary/.gitkeep
 # Generated per `wails build -nsis` run (WebView2 bootstrapper + resolved macros).
 build/windows/installer/wails_tools.nsh
 build/windows/installer/tmp/
-
-*dev-data
