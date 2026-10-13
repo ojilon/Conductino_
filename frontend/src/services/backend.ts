@@ -35,6 +35,8 @@ interface WailsApp {
   AIMeters(): Promise<string>;
   /** Raw workspace bytes (base64) for renderers needing originals (PDF canvas). */
   ReadRawFile(path: string): Promise<string>;
+  /** One extract_dump file's content, by NAME (OpenedFile.dump). Fenced to the dump dir. */
+  ReadDumpFile(name: string): Promise<string>;
   /** Server-side budgeted context assembly (plan 11 §4). */
   BuildContextPack(
     blocksJSON: string,
@@ -98,10 +100,13 @@ export type OpenFailureReason = "unsupported" | "not_found" | "permission_denied
 
 /**
  * Real content of one workspace file, as returned by App.OpenFile.
- * blocksJSON decodes to DocumentBlock[] (types/domain.ts).
- * A classified failure arrives as a VALUE with `reason` set and blocksJSON
- * empty — never a rejection — so the caller can tell "unsupported type"
- * apart from real read failures. Null = no bridge (mock/browser mode).
+ * Dump-backed transfer: content lands in <data>/temporary/extract_dump/
+ * and arrives here as a NAME (dump) — the UI reads it via readDumpFile,
+ * so big files never sit in two memories at once. blocksJSON is empty on
+ * this path (kept for old desktop builds: parse inline when present).
+ * A classified failure arrives as a VALUE with `reason` set and no dump —
+ * never a rejection — so the caller can tell "unsupported type" apart from
+ * real read failures. Null = no bridge (mock/browser mode).
  */
 export interface OpenedFile {
   title: string;
@@ -110,6 +115,8 @@ export interface OpenedFile {
   kind?: string;
   /** Absolute opening root tagging the file's folder (tasks.md 1.1 option b). */
   root?: string;
+  /** Extract-dump file NAME holding the content (read via readDumpFile). */
+  dump?: string;
   /** Empty on success; set on classified failure (tasks.md 1.2). */
   reason?: OpenFailureReason;
   detail?: string;
@@ -337,6 +344,20 @@ export async function openRawFile(path: string): Promise<Uint8Array | null> {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/**
+ * One extract_dump file's content, by NAME (OpenedFile.dump). The name is
+ * fenced to the dump dir on the Go side — no separators, no `..`.
+ * Throws without the desktop bridge or when the dump is gone (callers
+ * toast and return, same as any open failure).
+ */
+export async function readDumpFile(name: string): Promise<string> {
+  const app = wailsApp();
+  if (!app || typeof app.ReadDumpFile !== "function") {
+    throw new Error("dump reading needs the desktop app");
+  }
+  return app.ReadDumpFile(name);
 }
 
 /**

@@ -1,4 +1,8 @@
-// Package backend is pure, independent Go — it knows nothing about Wails.
+// Package backend is pure Go — no Wails imports. One Backend struct wires
+// the small packages together: list (library root + tree), read/save
+// (documents), store (SQLite/memory), ai (models), mirror (summary working
+// copies). Methods are thin and direct; the real logic lives in the
+// packages, tested without any UI.
 package backend
 
 import (
@@ -10,33 +14,42 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/ai"
 	"Conductino/backend/apppaths"
-	"Conductino/backend/extract"
+	"Conductino/backend/list"
 	"Conductino/backend/mirror"
-	"Conductino/backend/models"
-	"Conductino/backend/services"
+	"Conductino/backend/model"
+	"Conductino/backend/read"
+	"Conductino/backend/save"
+	"Conductino/backend/store"
 )
 
-type AIEventSink = services.AIEventSink
-
 type Backend struct {
-	fs      *services.Filesystem
-	storage services.StorageService
-	docs    *services.Documents
-	ai      services.AIService
-	work    *services.Workspace
+	lib     *list.Library
+	storage store.StorageService
+	ai      *ai.GeminiService
+	mirrors *mirror.Store
+	// workspaceID is the storage id for the current root ("ws-<folder>").
+	workspaceID string
+}
+
+// opener adapts read.OpenDirect to the tools.FileOpener interface the AI
+// loop takes (absolute path in, already Resolve-checked by the host).
+type opener struct{}
+
+func (opener) OpenFile(absPath, relKey string) (model.Doc, *model.Fail) {
+	return read.OpenDirect(absPath, relKey, "")
 }
 
 func NewBackend() *Backend {
-	fs := services.NewFilesystem("research_workspace")
-	docs := services.NewDocuments()
-	store := services.OpenDefaultStorage(context.Background())
+	lib := list.NewLibrary("research_workspace")
+	storage := store.OpenDefaultStorage(context.Background())
 	return &Backend{
-		fs:      fs,
-		storage: store,
-		docs:    docs,
-		ai:      services.NewAI(fs, docs),
-		work:    services.NewWorkspace(fs, store),
+		lib:         lib,
+		storage:     storage,
+		ai:          ai.NewWithTools(lib, opener{}),
+		mirrors:     mirror.New(mirror.DefaultDir()),
+		workspaceID: "ws-default",
 	}
 }
 
@@ -48,124 +61,116 @@ func (b *Backend) Init(ctx context.Context) error {
 		return err
 	}
 	// Restore last library root so the next session opens the same folder.
-	// Workspace.SetLibraryRoot replays the stored root (no error return).
 	if root, ok := b.storage.GetSetting("last_library_root"); ok && root != "" {
-		b.work.SetLibraryRoot(root)
+		b.lib.SetRoot(root)
+		b.adoptWorkspaceID(root)
 	}
-	// Scratch-mirror hygiene (plan 10 §2): drop mirrors untouched for 7 days.
+	// Scratch-mirror hygiene: drop mirrors untouched for 7 days.
 	// Best-effort — a failure here must never block startup.
-	_ = mirror.New(mirror.DefaultDir()).Sweep(7 * 24 * time.Hour)
+	_ = b.mirrors.Sweep(7 * 24 * time.Hour)
 	return nil
 }
 
-// BuildContextPack assembles a budgeted context string server-side
-// (plan 11 §4: budgeting moves behind an API; the UI keeps rendering).
+// adoptWorkspaceID finds or creates the storage id for root. Same folder
+// keeps its id (threads survive restarts); a new folder gets ws-<name>.
+func (b *Backend) adoptWorkspaceID(root string) {
+	if existing, _ := b.storage.GetWorkspaceByRoot(root); existing != nil {
+		b.workspaceID = existing.ID
+		return
+	}
+	id := "ws-" + filepath.Base(root)
+	if existing, _ := b.storage.GetWorkspace(id); existing != nil && existing.RootPath != root {
+		id = "ws-" + filepath.Base(root) + "-" + time.Now().Format("150405")
+	}
+	b.workspaceID = id
+	_ = b.storage.UpsertWorkspace(model.WorkspaceRecord{
+		ID: id, RootPath: root, Label: filepath.Base(root), UpdatedAt: time.Now().UnixMilli(),
+	})
+}
+
+// BuildContextPack assembles a budgeted context string server-side.
+// The UI keeps rendering; budgeting lives behind this API.
 func (b *Backend) BuildContextPack(blocksJSON, title, blockID, selText string, rangeStart, rangeEnd, windowBlocks int, includeOutline bool) (string, error) {
-	return extract.BuildContextPack(blocksJSON, extract.PackOpts{
+	return read.BuildContextPack(blocksJSON, read.PackOpts{
 		Title: title, BlockID: blockID, SelText: selText,
 		RangeStart: rangeStart, RangeEnd: rangeEnd,
 		WindowBlocks: windowBlocks, IncludeOutline: includeOutline,
 	})
 }
 
-// MatchSkills returns skill excerpts for an operation+intent as JSON
-// (plan 11 §1). Empty array when nothing matches or AI is unconfigured.
+// MatchSkills returns skill excerpts for an operation+intent as JSON.
 func (b *Backend) MatchSkills(operation, intent string) (string, error) {
-	type matcher interface{ MatchedSkills(string, string) string }
-	if m, ok := b.ai.(matcher); ok && m != nil {
-		return m.MatchedSkills(operation, intent), nil
-	}
-	return "[]", nil
+	return b.ai.MatchedSkills(operation, intent), nil
 }
 
-func (b *Backend) ListTree(_ context.Context) ([]models.FileTreeNode, error) {
-	// Legacy slice wrapper kept for compat: ListLibraryTree is the canonical
-	// call (single nested root node, matching the TS FileTreeNode shape).
-	root, err := b.ListLibraryTree()
-	if err != nil {
-		return nil, err
+// ListLibraryTree returns ONE nested root node (nil = no folder mounted;
+// the UI shows "Choose folder", not an error).
+func (b *Backend) ListLibraryTree() (*model.Node, error) {
+	n, fail := b.lib.Tree()
+	if fail != nil {
+		return nil, fmt.Errorf("%s", fail.Error())
 	}
-	if root == nil {
-		return []models.FileTreeNode{}, nil
-	}
-	return []models.FileTreeNode{*root}, nil
+	return n, nil
 }
 
-// ListLibraryTree is the canonical library call bound as
-// window.go.frontend.App.ListLibraryTree. It returns ONE nested root node
-// (or nil when no folder is mounted — the UI shows "Choose folder", not an
-// error). The old ListTree slice wrapper above stays for compat.
-func (b *Backend) ListLibraryTree() (*models.FileTreeNode, error) {
-	return b.work.LibraryTree()
-}
-
-func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocument, error) {
-	// Typed-failure contract (tasks.md 1.2): classified file problems are
-	// returned as a VALUE with Reason set — never a Go error — so the UI can
-	// tell "unsupported type" apart from real read failures without
-	// string-matching. Only unexpected bridge failures return an error.
-	// Root always tags the opening folder (tasks.md 1.1 option b).
-	root := b.fs.Root()
-	abs, err := b.fs.Resolve(path)
-	if err != nil {
-		reason, detail := services.ReasonOf(err)
-		// Resolve errors (e.g. path escapes workspace) have no OpenError
-		// wrapper, so ReasonOf falls back to parse_error — still a value.
-		return &models.OpenedDocument{Root: root, Reason: string(reason), Detail: detail}, nil
+// OpenFile extracts one workspace file. Classified problems come back as a
+// VALUE with Reason set (never a Go error) so the UI tells "unsupported
+// type" apart from real failures without string-matching. Content ALWAYS
+// lands in the dump dir too (Dump name on the value) — the UI reads it
+// back via ReadDumpFile instead of holding every file in memory twice.
+func (b *Backend) OpenFile(_ context.Context, path string) (*model.Doc, error) {
+	root := b.lib.Root()
+	abs, fail := read.Resolve(root, path)
+	if fail != nil {
+		return &model.Doc{Root: root, Reason: fail.Reason, Detail: fail.Detail}, nil
 	}
-	// Extract cache (issues 24+26): unchanged files never re-extract.
-	// Key is root-anchored so the same rel token under another folder can't
-	// collide. Cache errors are non-fatal — fall through to extraction.
 	cacheKey := root + "\x00" + path
-	var statMtime, statSize int64 = -1, -1
-	if info, serr := os.Stat(abs); serr == nil && !info.IsDir() {
-		statMtime, statSize = info.ModTime().UnixMilli(), info.Size()
-		if hit, cerr := b.storage.GetCachedExtract(cacheKey, statMtime, statSize); cerr == nil && hit != nil {
-			return &models.OpenedDocument{
+	mtime, size, keyed := read.CacheProbe(abs)
+	if keyed {
+		if hit, cerr := b.storage.GetCachedExtract(cacheKey, mtime, size); cerr == nil && hit != nil {
+			out := &model.Doc{
 				Title: hit.Title, BlocksJSON: hit.BlocksJSON,
 				PageCount: hit.PageCount, Kind: hit.Kind, Root: root,
-			}, nil
+			}
+			// Dump-backed transfer: content goes to disk, the UI reads it
+			// back by name. Inline JSON is cleared so big files never sit
+			// in two memories at once.
+			if name, derr := read.DumpFor("", root, path, hit.BlocksJSON); derr == nil {
+				out.Dump = name
+				out.BlocksJSON = ""
+			}
+			return out, nil
 		}
 	}
-	opened, err := b.docs.OpenFile(abs, path)
-	if err != nil {
-		if reason, detail := services.ReasonOf(err); reason != "" {
-			opened.Reason = string(reason)
-			opened.Detail = detail
-			opened.Root = root
-			return &opened, nil
-		}
-		return nil, err
+	opened, fail := read.OpenFile(root, "", path)
+	if fail != nil {
+		return &model.Doc{Root: root, Reason: fail.Reason, Detail: fail.Detail}, nil
 	}
 	opened.Root = root
-	if statMtime >= 0 {
+	if keyed {
 		// Best-effort store; extraction already succeeded, so a cache
 		// failure must never fail the open.
-		_ = b.storage.PutCachedExtract(services.CachedExtract{
-			Path: cacheKey, Mtime: statMtime, Size: statSize,
+		_ = b.storage.PutCachedExtract(model.CachedExtract{
+			Path: cacheKey, Mtime: mtime, Size: size,
 			Kind: opened.Kind, Title: opened.Title,
 			BlocksJSON: opened.BlocksJSON, PageCount: opened.PageCount,
 		})
 	}
-	// Debug dump (dev.bat sets CONDUCTINO_DUMP_EXTRACT=1): mirror the wire
-	// payload to <data>/temporary/extract_dump/<safe>.json. dataRoot "" means
-	// "resolve via apppaths" — so `wails dev` lands in .dev-data/temporary/
-	// and the installed app lands in Conductino_Data/temporary/. Best-effort:
-	// dumping must never fail an open.
-	if os.Getenv("CONDUCTINO_DUMP_EXTRACT") == "1" {
-		_, _ = extract.DumpExtractJSON("", path, opened.BlocksJSON)
+	// Dump-backed transfer (see cache-hit path): inline JSON cleared.
+	if opened.Dump != "" {
+		opened.BlocksJSON = ""
 	}
 	return &opened, nil
 }
 
-// maxRawFileBytes caps raw file serving for the PDF canvas leaf (issue 18).
+// maxRawFileBytes caps raw file serving for the PDF canvas leaf.
 const maxRawFileBytes = 30 << 20 // 30 MiB
 
-// ReadRawFile returns base64-encoded bytes of a workspace file for renderers
-// that need the original bytes (PDF canvas leaf). Resolve-jailed like
-// OpenFile; oversized files are refused, never streamed partially.
+// ReadRawFile returns base64-encoded bytes of a workspace file for
+// renderers needing originals (PDF canvas). Resolve-jailed; oversized
+// files are refused, never streamed partially.
 func (b *Backend) ReadRawFile(path string) (string, error) {
-	abs, err := b.fs.Resolve(path)
+	abs, err := b.lib.Resolve(path)
 	if err != nil {
 		return "", err
 	}
@@ -183,39 +188,34 @@ func (b *Backend) ReadRawFile(path string) (string, error) {
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
-// ShowContainingFolder reveals a workspace path in the OS file manager.
-// Resolution + containment go through Filesystem.Resolve, so callers can
-// never point the OS outside the open folder.
-func (b *Backend) ShowContainingFolder(path string) (string, error) {
-	return b.fs.ShowContainingFolder(path)
+// ReadDumpFile returns one extract_dump file's content by NAME (see
+// Doc.Dump). Names are fenced to the dump dir — no separators, no `..`.
+func (b *Backend) ReadDumpFile(name string) (string, error) {
+	return read.ReadDump("", name)
 }
 
-func (b *Backend) ResolvePath(_ context.Context, path string) (string, error) {
-	return b.fs.Resolve(path)
+// ShowContainingFolder reveals a workspace path in the OS file manager.
+// Resolution + containment go through the jail, so callers can never point
+// the OS outside the open folder.
+func (b *Backend) ShowContainingFolder(path string) (string, error) {
+	return b.lib.ShowContainingFolder(path)
 }
 
 func (b *Backend) SetLibraryRoot(_ context.Context, root string) error {
-	// Workspace.SetLibraryRoot never fails (empty path is ignored); persist
-	// the choice so Init can restore it next launch.
-	b.work.SetLibraryRoot(root)
-	_ = b.storage.SetSetting("last_library_root", root)
+	b.lib.SetRoot(root)
+	if root != "" {
+		b.adoptWorkspaceID(root)
+		_ = b.storage.SetSetting("last_library_root", root)
+	}
 	return nil
 }
 
 func (b *Backend) LibraryRoot() string {
-	return b.work.LibraryRoot()
+	return b.lib.Root()
 }
 
-func (b *Backend) WorkspaceID() string {
-	return b.work.WorkspaceID()
-}
-
-func (b *Backend) StorageEngine() string {
-	return b.storage.Engine()
-}
-
-// UsageMeters exposes AI session telemetry (per-provider calls + tool
-// counts) for the Settings dialog. Empty when nothing ran yet.
+// UsageMeters exposes AI session telemetry for the Settings dialog.
+// Empty when nothing ran yet.
 func (b *Backend) UsageMeters() string {
 	if b.ai == nil {
 		return ""
@@ -223,13 +223,10 @@ func (b *Backend) UsageMeters() string {
 	return b.ai.UsageMeters()
 }
 
-func (b *Backend) RunAI(ctx context.Context, req models.AIRequest, sink AIEventSink) error {
-	// Phase 6: if chat omitted summary content, load primary summary from DB.
-	// The summary snapshot is the BlocksJSON wire payload — the tool host
-	// truncates/proposes from it, so no format conversion happens here.
+func (b *Backend) RunAI(ctx context.Context, req model.AIRequest, sink ai.EventSink) error {
+	// If chat omitted summary content, load the primary summary from the DB.
 	if req.SummaryContent == "" && req.WorkspaceID != "" {
-		wsID := req.WorkspaceID
-		if sum, err := b.storage.GetPrimarySummary(wsID); err == nil && sum != nil {
+		if sum, err := b.storage.GetPrimarySummary(req.WorkspaceID); err == nil && sum != nil {
 			req.SummaryContent = sum.BlocksJSON
 			if req.PrimarySummaryID == "" {
 				req.PrimarySummaryID = sum.ID
@@ -243,106 +240,53 @@ func (b *Backend) RunAI(ctx context.Context, req models.AIRequest, sink AIEventS
 }
 
 func (b *Backend) SetPrimarySummary(summaryID string) error {
-	return b.work.SetPrimarySummary(summaryID)
+	ws, err := b.storage.GetWorkspace(b.workspaceID)
+	if err != nil {
+		return err
+	}
+	if ws == nil {
+		ws = &model.WorkspaceRecord{ID: b.workspaceID, RootPath: b.lib.Root()}
+	}
+	ws.PrimarySummaryID = summaryID
+	ws.UpdatedAt = time.Now().UnixMilli()
+	return b.storage.UpsertWorkspace(*ws)
 }
 
-// WriteSummaryDOCX writes canonical blocks as a .docx under the library root.
-// relPath is workspace-relative (e.g. "summaries/My-Paper.docx"); empty uses
-// DefaultSummaryDOCXName from the first heading/title in blocksJSON.
-// Returns the absolute path written.
+// WriteSummaryDOCX writes canonical blocks as a .docx under the library
+// root. Empty relPath auto-names from the first block's title.
 func (b *Backend) WriteSummaryDOCX(relPath, blocksJSON string) (string, error) {
-	root := b.work.LibraryRoot()
+	root := b.lib.Root()
 	if root == "" {
 		return "", fmt.Errorf("no library root set")
 	}
 	if relPath == "" {
 		title := "summary"
-		if blocks, err := services.ParseBlocksJSON(blocksJSON); err == nil && len(blocks) > 0 {
-			t := ""
-			for _, s := range blocks[0].Segments {
-				t += s.Text
-			}
-			if t != "" {
+		if blocks, err := model.ParseBlocks(blocksJSON); err == nil && len(blocks) > 0 {
+			if t := strings.TrimSpace(blocks[0].Text()); t != "" {
 				title = t
 			}
 		}
-		relPath = services.DefaultSummaryDOCXName(title)
+		relPath = save.DefaultSummaryDOCXName(title)
 	}
-	return b.docs.WriteSummaryDOCX(root, relPath, blocksJSON)
+	return save.WriteSummaryDOCXPath(root, relPath, blocksJSON)
 }
 
-func (b *Backend) SaveDocument(doc services.DocumentRecord) error {
-	// Timestamps are Unix millis (INTEGER in SQLite); zero is filled by UpsertDocument.
-	doc.UpdatedAt = time.Now().UnixMilli()
-	return b.storage.UpsertDocument(doc)
-}
-
-func (b *Backend) LoadDocument(id string) (*services.DocumentRecord, error) {
-	return b.storage.GetDocument(id)
-}
-
-func (b *Backend) ListDocuments(workspaceID string) ([]services.DocumentRecord, error) {
-	return b.storage.ListDocuments(workspaceID)
-}
-
-func (b *Backend) SaveChange(ch services.ChangeRecord) error {
-	// ChangeRecord tracks CreatedAt (not UpdatedAt) — UpsertChange also defaults it.
-	ch.CreatedAt = time.Now().UnixMilli()
-	return b.storage.UpsertChange(ch)
-}
-
-func (b *Backend) ListPendingChanges(documentID string) ([]services.ChangeRecord, error) {
-	return b.storage.ListPendingChanges(documentID)
-}
-
-func (b *Backend) SaveThread(t services.ChatThreadRecord) error {
-	// Threads carry both CreatedAt/UpdatedAt millis; only bump UpdatedAt here
-	// so the original creation time survives re-saves.
+func (b *Backend) SaveThread(t model.ChatThreadRecord) error {
+	// Only bump UpdatedAt so the original creation time survives re-saves.
 	t.UpdatedAt = time.Now().UnixMilli()
 	return b.storage.UpsertThread(t)
 }
 
-func (b *Backend) AppendChatMessage(msg services.ChatMessageRecord) error {
-	// Messages are append-only; stamp CreatedAt millis (UpsertThread bumps the parent).
+func (b *Backend) AppendChatMessage(msg model.ChatMessageRecord) error {
+	// Messages are append-only; stamp CreatedAt millis.
 	msg.CreatedAt = time.Now().UnixMilli()
 	return b.storage.AppendMessage(msg)
 }
 
-func (b *Backend) LoadThread(id string) (*services.ChatThreadRecord, error) {
-	return b.storage.GetThread(id)
-}
-
-func (b *Backend) ListThreads(workspaceID string) ([]services.ChatThreadRecord, error) {
+func (b *Backend) ListThreads(workspaceID string) ([]model.ChatThreadRecord, error) {
 	return b.storage.ListThreads(workspaceID)
 }
 
-func (b *Backend) ListMessages(threadID string) ([]services.ChatMessageRecord, error) {
+func (b *Backend) ListMessages(threadID string) ([]model.ChatMessageRecord, error) {
 	return b.storage.ListMessages(threadID)
-}
-
-func (b *Backend) LoadPrimarySummary(workspaceID string) (*services.DocumentRecord, error) {
-	if workspaceID == "" {
-		workspaceID = b.work.WorkspaceID()
-	}
-	return b.storage.GetPrimarySummary(workspaceID)
-}
-
-// Convenience for absolute paths under the library root.
-func (b *Backend) JoinUnderRoot(parts ...string) string {
-	root := b.work.LibraryRoot()
-	args := append([]string{root}, parts...)
-	return filepath.Join(args...)
-}
-
-func (b *Backend) IsUnderRoot(path string) bool {
-	root := b.work.LibraryRoot()
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil {
-		return false
-	}
-	return !strings.HasPrefix(rel, "..")
 }

@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 	"Conductino/backend/skills"
+	"Conductino/backend/tools"
 )
 
 func TestWithContextIncludesCustomAndPack(t *testing.T) {
-	req := models.AIRequest{
+	req := model.AIRequest{
 		CustomPrompt: "Focus on the mechanism",
 		ContextPack:  "### Selection\nATP synthase turns",
 	}
@@ -27,12 +28,12 @@ func TestWithContextIncludesCustomAndPack(t *testing.T) {
 }
 
 func TestBuildPromptExplainUsesSelectionAndContext(t *testing.T) {
-	req := models.AIRequest{
+	req := model.AIRequest{
 		SelectionText: "chemiosmosis",
 		ContextPack:   "### Outline\n# Methods",
 		CustomPrompt:  "Be brief",
 	}
-	prompt, kind, tokens := buildPrompt(models.OpExplain, req)
+	prompt, kind, tokens := buildPrompt(model.OpExplain, req)
 	if prompt == "" || kind != kindExplanation || tokens <= 0 {
 		t.Fatalf("bad prompt result: %q %v %d", prompt, kind, tokens)
 	}
@@ -48,16 +49,16 @@ func TestBuildPromptExplainUsesSelectionAndContext(t *testing.T) {
 }
 
 func TestBuildPromptUnknownOp(t *testing.T) {
-	p, k, n := buildPrompt(models.AIOperation("AI_NOPE"), models.AIRequest{})
+	p, k, n := buildPrompt(model.AIOperation("AI_NOPE"), model.AIRequest{})
 	if p != "" || k != "" || n != 0 {
 		t.Fatalf("expected empty, got %q %v %d", p, k, n)
 	}
 }
 
 func TestBuildPromptForNoSkillsUnchanged(t *testing.T) {
-	req := models.AIRequest{Query: "What is chemiosmosis?"}
-	plain, _, _ := buildPrompt(models.OpChat, req)
-	wired, _, _ := (&GeminiService{}).buildPromptFor(models.OpChat, req)
+	req := model.AIRequest{Query: "What is chemiosmosis?"}
+	plain, _, _ := buildPrompt(model.OpChat, req)
+	wired, _, _ := (&GeminiService{}).buildPromptFor(model.OpChat, req)
 	if wired != plain {
 		t.Fatal("no skills loaded — prompt must be byte-identical")
 	}
@@ -69,7 +70,7 @@ func TestBuildPromptForInjectsMatchedSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &GeminiService{skills: []skills.Skill{sk}}
-	prompt, _, _ := g.buildPromptFor(models.OpChat, models.AIRequest{Query: "summarize this"})
+	prompt, _, _ := g.buildPromptFor(model.OpChat, model.AIRequest{Query: "summarize this"})
 	if !strings.Contains(prompt, "## Skill: summarize-source") {
 		t.Fatalf("skill excerpt missing:\n%s", prompt)
 	}
@@ -77,21 +78,21 @@ func TestBuildPromptForInjectsMatchedSkill(t *testing.T) {
 		t.Fatal("user query lost under skill injection")
 	}
 	// Unmatched operation gets no injection.
-	other, _, _ := g.buildPromptFor(models.OpExplain, models.AIRequest{SelectionText: "x"})
+	other, _, _ := g.buildPromptFor(model.OpExplain, model.AIRequest{SelectionText: "x"})
 	if strings.Contains(other, "## Skill:") {
 		t.Fatal("explain must not match the chat/merge skill")
 	}
 }
 
 func TestBuildPromptRewriteIncludesFocusedChange(t *testing.T) {
-	req := models.AIRequest{
+	req := model.AIRequest{
 		Query:          "Long draft sentence.",
 		SummaryContent: "Current summary text.",
-		FocusedChange: &models.FocusedChange{
+		FocusedChange: &model.FocusedChange{
 			ID: "c1", Op: "insert", BlockID: "b9", NewContent: "Long draft sentence.",
 		},
 	}
-	prompt, kind, _ := buildPrompt(models.OpRewrite, req)
+	prompt, kind, _ := buildPrompt(model.OpRewrite, req)
 	if kind != kindRevision {
 		t.Fatalf("kind: %v", kind)
 	}
@@ -101,14 +102,14 @@ func TestBuildPromptRewriteIncludesFocusedChange(t *testing.T) {
 		}
 	}
 	// No focus, no block.
-	plain, _, _ := buildPrompt(models.OpRewrite, models.AIRequest{Query: "x"})
+	plain, _, _ := buildPrompt(model.OpRewrite, model.AIRequest{Query: "x"})
 	if strings.Contains(plain, "Focused pending proposal") {
 		t.Fatal("unfocused rewrite must stay bare")
 	}
 }
 
 func TestEncodeChatWithProposalsCarriesTrace(t *testing.T) {
-	payload := encodeChatWithProposals("done", []proposal{{Op: "insert", NewText: "x"}}, []aiToolCall{
+	payload := encodeChatWithProposals("done", []tools.Proposal{{Op: "insert", NewText: "x"}}, []aiToolCall{
 		{Tool: "read_source", OK: true, Ms: 12},
 		{Tool: "propose_summary_edit", OK: false, Ms: 3},
 	}, []aiPublishedSummary{{SummaryID: "s", Path: "Summary.docx"}})
@@ -125,14 +126,14 @@ func TestEncodeChatWithProposalsCarriesTrace(t *testing.T) {
 }
 
 func TestBuildPromptChatIncludesHistory(t *testing.T) {
-	req := models.AIRequest{
+	req := model.AIRequest{
 		Query: "What is chemiosmosis?",
-		MessageHistory: []models.ChatTurn{
+		MessageHistory: []model.ChatTurn{
 			{Role: "user", Content: "Hi"},
 			{Role: "assistant", Content: "Hello"},
 		},
 	}
-	prompt, kind, tokens := buildPrompt(models.OpChat, req)
+	prompt, kind, tokens := buildPrompt(model.OpChat, req)
 	if prompt == "" || kind != kindExplanation || tokens <= 0 {
 		t.Fatalf("bad: %q %v %d", prompt, kind, tokens)
 	}

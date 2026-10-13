@@ -1,41 +1,22 @@
-//implementation of the open-file loop
-
+// Package read owns everything about file content: jail-checked opening,
+// text/pdf/docx parsing, block intermediates, context packs, and the
+// extract_dump files the UI reads back. One package, plain functions, two
+// shared structs from backend/model (Doc, Fail).
+//
+// Layout:
+//   open.go      — OpenFile (UI path: jail+caps+parse+dump) + OpenDirect (tools path)
+//   resolve.go   — token → absolute path jail (from services/filesystem.go)
+//   text.go      — txt/md arm + stable IDs (from extract/text.go + ids.go)
+//   pdf.go       — pdf text-layer arm (from extract/pdf.go)
+//   docx.go      — docx read arm (from extract/docx.go; writer lives in save)
+//   normalize.go — blocks ↔ markdown intermediate (from extract/normalize.go)
+//   context.go   — budgeted AI context packs (from extract/context.go)
+//   dump.go      — extract_dump files (from extract/dump.go)
+//
+// Rule: read imports model + apppaths + stdlib (+ ledongthuc/pdf) ONLY.
+// Never ai/tools/usage/frontend — offline work stays testable without keys.
 package read
 
-// Fail is a classified failure. nil *Fail = success, check it first.
-// Reason lets the frontend show honest messages without parsing text.
-type Fail struct {
-	Reason string
-	Detail string
-}
-
-const (
-	ReasonUnsupported      = "unsupported"
-	ReasonNotFound         = "not_found"
-	ReasonPermissionDenied = "permission_denied"
-	ReasonTooLarge         = "too_large"
-	ReasonParseError       = "parse_error"
-)
-
-func (f *Fail) Error() string {
-	if f == nil {
-		return "<nil>"
-	}
-
-	if f.Detail != "" {
-		return f.Reason + ": " + f.Detail
-	}
-
-	return f.Reason
-}
-
-
-// Doc is one opened file. Blocks is the {"blocks":[...]} JSON string
-// the React renderer parses.
-type Doc struct {
-	Title  string
-	Kind   string // "text" for now; pdf/docx land in later cycles
-	Blocks string
-	Pages  int
-	Root   string // absolute library root — tags which folder this came from
-}
+// PageBudget mirrors the frontend paginateBlocks budget (DocumentView.tsx):
+// ~2000 chars per virtual page for formats without real page breaks.
+const PageBudget = 2000

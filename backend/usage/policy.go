@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 )
 
 // Request policy (issue 10, plan 05 §3): cost classes, a global in-process
@@ -19,14 +19,14 @@ import (
 // CostClass/Acquire/Release/ExplainCacheGet/Put around its model calls.
 
 // CostClass tags a request S/M/L before send (plan 05 §3.1).
-func CostClass(op models.AIOperation, inputChars int) string {
+func CostClass(op model.AIOperation, inputChars int) string {
 	if inputChars > 6000 {
 		return "L" // large packs queue hardest regardless of op
 	}
 	switch op {
-	case models.OpRewrite:
+	case model.OpRewrite:
 		return "S"
-	case models.OpChat, models.OpMerge, models.OpSummarize:
+	case model.OpChat, model.OpMerge, model.OpSummarize:
 		return "L" // tool loops / multi-call / full-text work
 	default:
 		return "M"
@@ -80,7 +80,7 @@ const (
 var explainMu sync.Mutex
 var explainCache = map[string]explainCacheEntry{}
 
-func explainCacheKey(op models.AIOperation, req models.AIRequest) string {
+func explainCacheKey(op model.AIOperation, req model.AIRequest) string {
 	sel := strings.TrimSpace(req.SelectionText)
 	if sel == "" {
 		sel = strings.TrimSpace(req.Selection)
@@ -90,8 +90,8 @@ func explainCacheKey(op models.AIOperation, req models.AIRequest) string {
 }
 
 // ExplainCacheGet returns a cached one-shot answer, if fresh.
-func ExplainCacheGet(op models.AIOperation, req models.AIRequest) (string, bool) {
-	if op != models.OpExplain && op != models.OpVerify {
+func ExplainCacheGet(op model.AIOperation, req model.AIRequest) (string, bool) {
+	if op != model.OpExplain && op != model.OpVerify {
 		return "", false
 	}
 	key := explainCacheKey(op, req)
@@ -106,8 +106,8 @@ func ExplainCacheGet(op models.AIOperation, req models.AIRequest) (string, bool)
 }
 
 // ExplainCachePut stores a one-shot answer (chat/merges never cached).
-func ExplainCachePut(op models.AIOperation, req models.AIRequest, text string) {
-	if op != models.OpExplain && op != models.OpVerify {
+func ExplainCachePut(op model.AIOperation, req model.AIRequest, text string) {
+	if op != model.OpExplain && op != model.OpVerify {
 		return
 	}
 	if strings.TrimSpace(text) == "" {

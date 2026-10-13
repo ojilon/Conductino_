@@ -129,7 +129,7 @@ func CacheDir() string { return filepath.Join(DataRoot(), "cache", "extract") }
 func TemporaryDir() string { return filepath.Join(DataRoot(), "temporary") }
 
 // ExtractDumpDir holds per-file extraction JSON dumps used while developing
-// the extraction pipeline (see backend/extract/dump.go). The extractor
+// the extraction pipeline (see backend/read/dump.go). The extractor
 // creates it on demand with MkdirAll, so deleting it by hand never crashes
 // the app — the next dump just recreates it.
 func ExtractDumpDir() string { return filepath.Join(TemporaryDir(), "extract_dump") }

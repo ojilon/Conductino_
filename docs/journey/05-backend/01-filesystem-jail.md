@@ -2,6 +2,6 @@
 
 Goal / Non-goal / Where in code / Concept / Flow / Rewrite options / Exercise / Done when.
 
-Goal: own Resolve/walk/reveal. Where: `filesystem.go:66 ListRoot`, `:90 Resolve`, `:111 ShowContainingFolder`, `:140 walkDir`.
-Exercise: add tests for `..`, absolute outsider, symlink dir.
+Goal: own Resolve/walk/reveal. Where: `backend/read/resolve.go` Resolve, `backend/list/list.go` walk, `backend/list/library.go` Library.Resolve, `backend/list/reveal.go` ShowContainingFolder.
+Exercise: add tests for `..`, absolute outsider, `\`-rooted token, symlink dir.
 Done when: jail has tests + you can explain it blind.

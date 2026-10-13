@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 	"Conductino/backend/skills"
 )
 
@@ -88,7 +88,7 @@ const (
 	tokenBudgetChat        = 2048
 )
 
-func selectionText(req models.AIRequest) string {
+func selectionText(req model.AIRequest) string {
 	sel := strings.TrimSpace(req.SelectionText)
 	if sel == "" {
 		sel = strings.TrimSpace(req.Selection)
@@ -97,7 +97,7 @@ func selectionText(req models.AIRequest) string {
 }
 
 // withContext appends custom prompt + document context pack + summary snapshot.
-func withContext(base string, req models.AIRequest) string {
+func withContext(base string, req model.AIRequest) string {
 	var b strings.Builder
 	b.WriteString(base)
 	if cp := strings.TrimSpace(req.CustomPrompt); cp != "" {
@@ -120,7 +120,7 @@ func withContext(base string, req models.AIRequest) string {
 
 // formatChatHistory turns prior turns into a readable transcript block.
 // Roles are lowercased for the model; empty content is skipped.
-func formatChatHistory(turns []models.ChatTurn) string {
+func formatChatHistory(turns []model.ChatTurn) string {
 	if len(turns) == 0 {
 		return ""
 	}
@@ -149,30 +149,30 @@ func formatChatHistory(turns []models.ChatTurn) string {
 // its answer belongs to, and its token ceiling. It returns "" for operations
 // this service does not serve (AI_SEARCH is rejected earlier with its own
 // honest message).
-func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKind, int) {
+func buildPrompt(op model.AIOperation, req model.AIRequest) (string, promptKind, int) {
 	sel := selectionText(req)
 	query := strings.TrimSpace(req.Query)
 	switch op {
-	case models.OpExplain:
+	case model.OpExplain:
 		base := "Explain the following passage from a research document concisely, in 2-4 sentences, for a researcher. Use the document context when it clarifies the passage. Always finish your final sentence:\n\n" + sel
 		return withContext(base, req), kindExplanation, tokenBudgetExplanation
-	case models.OpVerify:
+	case model.OpVerify:
 		base := "Assess the following claim from a research document in 2-4 sentences: is it well-supported on its face, and what caveat (if any) should a researcher keep in mind? Use surrounding context when provided. Always finish your final sentence. Claim:\n\n" + sel
 		return withContext(base, req), kindExplanation, tokenBudgetExplanation
-	case models.OpExpand:
+	case model.OpExpand:
 		base := "Go deeper on the following passage from a research document: unpack the mechanism, add relevant quantitative or contextual detail, in one short paragraph. Prefer details supported by the document context. Always finish your final sentence:\n\n" + sel
 		return withContext(base, req), kindExplanation, tokenBudgetExplanation
-	case models.OpSummarize:
+	case model.OpSummarize:
 		text := sel
 		if text == "" {
 			text = query
 		}
 		base := "Summarize the following text in 3-5 sentences for a research summary. Always finish your final sentence:\n\n" + text
 		return withContext(base, req), kindExplanation, tokenBudgetExplanation
-	case models.OpMerge:
+	case model.OpMerge:
 		base := "Draft a 1-2 sentence insertion for a research summary based on the following selected passage. Keep it factual and self-contained. Prefer not to repeat claims already present in the current research summary when that context is provided. Always finish your final sentence:\n\n" + sel
 		return withContext(base, req), kindInsertion, tokenBudgetExplanation
-	case models.OpRewrite:
+	case model.OpRewrite:
 		draft := query
 		if draft == "" {
 			draft = sel
@@ -185,7 +185,7 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 			base += "\n\n" + fb
 		}
 		return withContext(base, req), kindRevision, tokenBudgetShort
-	case models.OpChat:
+	case model.OpChat:
 		// Multi-turn: history + current user message (Query or CustomPrompt).
 		// The summary snapshot (withContext) is the harmonization baseline:
 		// the model may redefine, restructure, or remove — never append-only.
@@ -235,7 +235,7 @@ func buildPrompt(op models.AIOperation, req models.AIRequest) (string, promptKin
 // excerpts (≤2, ~1500 chars total), so tool discipline travels with the
 // request instead of one ever-growing system prompt. No skills loaded →
 // output identical to buildPrompt.
-func (g *GeminiService) buildPromptFor(op models.AIOperation, req models.AIRequest) (string, promptKind, int) {
+func (g *GeminiService) buildPromptFor(op model.AIOperation, req model.AIRequest) (string, promptKind, int) {
 	prompt, kind, budget := buildPrompt(op, req)
 	if prompt == "" {
 		return prompt, kind, budget
@@ -250,7 +250,7 @@ type skillExcerpt struct {
 }
 
 // matchedSkillExcerpts resolves operation+intent to ≤2 capped excerpts.
-func (g *GeminiService) matchedSkillExcerpts(op models.AIOperation, intent string) []skillExcerpt {
+func (g *GeminiService) matchedSkillExcerpts(op model.AIOperation, intent string) []skillExcerpt {
 	if g == nil || len(g.skills) == 0 {
 		return nil
 	}
@@ -278,7 +278,7 @@ func (g *GeminiService) matchedSkillExcerpts(op models.AIOperation, intent strin
 // attachSkills appends matched skill excerpts (plan 11 §1). Matching is by
 // operation + user text against each skill's `when`; injection is capped so
 // prompts stay budgeted.
-func (g *GeminiService) attachSkills(base string, op models.AIOperation, req models.AIRequest) string {
+func (g *GeminiService) attachSkills(base string, op model.AIOperation, req model.AIRequest) string {
 	matched := g.matchedSkillExcerpts(op, strings.TrimSpace(req.Query+" "+req.CustomPrompt))
 	if len(matched) == 0 {
 		return base
@@ -296,7 +296,7 @@ func (g *GeminiService) attachSkills(base string, op models.AIOperation, req mod
 // focusedProposalBlock renders the pending proposal a turn likely refers to
 // ("shorten this proposal"). Shared by chat (revise-by-reference) and
 // rewrite (Review revise button). Empty when nothing is focused.
-func focusedProposalBlock(fc *models.FocusedChange) string {
+func focusedProposalBlock(fc *model.FocusedChange) string {
 	if fc == nil || (strings.TrimSpace(fc.NewContent) == "" && strings.TrimSpace(fc.OldContent) == "") {
 		return ""
 	}

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 )
 
 // Path resolution + jail helpers. All future path-taking tools reuse
@@ -25,8 +25,8 @@ func (h *ToolHost) resolveSourcePath(rel string) (string, []string) {
 		return "", nil
 	}
 	var files []string
-	var walk func(n *models.FileTreeNode)
-	walk = func(n *models.FileTreeNode) {
+	var walk func(n *model.Node)
+	walk = func(n *model.Node) {
 		if n == nil {
 			return
 		}

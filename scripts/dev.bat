@@ -18,7 +18,7 @@ REM --- 1. setup temp dir (idempotent: missing recreated, existing left alone) -
 if not exist ".dev-data" mkdir ".dev-data" >nul 2>nul
 if not exist ".dev-data\temporary\extract_dump" mkdir ".dev-data\temporary\extract_dump" >nul 2>nul
 echo [dev] temp dir ready: .dev-data\temporary\extract_dump\
-echo [dev] dumps ON (CONDUCTINO_DUMP_EXTRACT=1). Open any file in the app, JSON appears there.
+echo [dev] dumps always on: every opened file lands there as JSON, then the UI reads it back.
 set "CONDUCTINO_DUMP_EXTRACT=1"
 
 REM --- 2. run the app (blocks here until you close it) ---

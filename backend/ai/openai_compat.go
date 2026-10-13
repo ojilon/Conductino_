@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"Conductino/backend/tools"
 	"Conductino/backend/usage"
 )
 
@@ -162,28 +163,28 @@ func oaiToolSchemas() []oaiTool {
 		return oaiTool{Type: "function", Function: oaiFunction{Name: name, Description: desc, Parameters: params}}
 	}
 	return []oaiTool{
-		fn(ToolListWorkspace, "List the workspace file tree (relative paths).",
+		fn(tools.ToolListWorkspace, "List the workspace file tree (relative paths).",
 			obj(map[string]any{})),
-		fn(ToolReadSource, "Read a workspace source file as text.",
+		fn(tools.ToolReadSource, "Read a workspace source file as text.",
 			obj(map[string]any{"path": str("Workspace-relative file path, e.g. notes/a.txt")}, "path")),
-		fn(ToolReadSummary, "Read the current research summary snapshot.",
+		fn(tools.ToolReadSummary, "Read the current research summary snapshot.",
 			obj(map[string]any{})),
-		fn(ToolProposeSummaryEdit, "Draft one summary change for the user to accept. Never append-only: redefine, restructure, or remove.",
+		fn(tools.ToolProposeSummaryEdit, "Draft one summary change for the user to accept. Never append-only: redefine, restructure, or remove.",
 			obj(map[string]any{
 				"text":   str("New/replacement text (empty for delete)"),
 				"op":     str("insert, modify, or delete"),
 				"target": str("Block id or quoted span for modify/delete"),
 				"oldtext": str("Span being replaced/removed (modify/delete fallback)"),
 			}, "text")),
-		fn(ToolSearchWorkspace, "Keyword search over readable workspace files; returns quoted snippets.",
+		fn(tools.ToolSearchWorkspace, "Keyword search over readable workspace files; returns quoted snippets.",
 			obj(map[string]any{"query": str("Keyword to find")}, "query")),
-		fn(ToolRunWorkflow, "Run a named multi-step routine. summarize-folder digests up to 3 files (read-only). add-to-summary reads one source and queues cited insert proposals (needs source path; summary must exist). Proposals stay user-gated; nothing is written.",
+		fn(tools.ToolRunWorkflow, "Run a named multi-step routine. summarize-folder digests up to 3 files (read-only). add-to-summary reads one source and queues cited insert proposals (needs source path; summary must exist). Proposals stay user-gated; nothing is written.",
 			obj(map[string]any{
 				"workflow": str("Routine name: summarize-folder | add-to-summary"),
 				"source":   str("Workspace-relative source path (add-to-summary only)"),
 				"topic":    str("What to extract (add-to-summary only)"),
 			}, "workflow")),
-		fn(ToolPublishSummary, "Write the summary working copy through to the mapped .docx (summaries are openly editable; sources stay read-only). Call after proposing, then report. No args.",
+		fn(tools.ToolPublishSummary, "Write the summary working copy through to the mapped .docx (summaries are openly editable; sources stay read-only). Call after proposing, then report. No args.",
 			obj(map[string]any{})),
 	}
 }
@@ -195,7 +196,7 @@ func (b *OpenAICompatBackend) Generate(ctx context.Context, prompt string, maxTo
 	// Configured model first, then live fallbacks — deduped. Only
 	// model-gone/quota errors advance the chain; anything else (auth,
 	// network, empty answer) returns immediately so we never burn quota
-	// blindly across models.
+	// blindly across model.
 	candidates := []string{b.model}
 	var fallbacks []string
 	if b.name == "groq" {

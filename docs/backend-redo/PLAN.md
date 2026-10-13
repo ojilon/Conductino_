@@ -35,11 +35,15 @@ until a new loop provably replaces it.
 
 ## Cycles
 
-- [ ] Cycle 1: open-file loop — `backend/read`, txt/md only (`cycle-01-open-file.md`)
-- [ ] Cycle 2: library list — `backend/list`, folder vs file tree tokens
-- [ ] Cycle 3: save — `backend/save`, write blocks back, preserve-on-update
-- [ ] Cycle 4: wire-up — new Wails methods, frontend calls new loop behind a flag
-- [ ] Cycle 5: retire — remove old packages, point docs at new code
+- [x] Cycle 1: open-file loop — `backend/read`, txt/md only (`cycle-01-open-file.md`)
+- [x] Cycle 2: library list — `backend/list`, folder vs file tree tokens (`cycle-02-list.md`)
+- [x] Cycle 3: save — `backend/save`, write blocks back (`cycle-03-save.md`)
+- [x] Cycle 4 (owner-entrusted full remake, 2026-10): `model/` single type home;
+  parsers unified in `read/` (+pdf/docx/normalize/context/dump); `Library` in
+  `list/`; docx-write in `save/`; `store/` moved from services; aliases, bridge,
+  internal/, models/, extract/, services/ deleted; Backend slimmed (dead
+  wrappers dropped); dump-backed OpenFile + ReadDumpFile; `backend.ts` +
+  ReaderMode switched. See `docs/journey/01-maps/11-file-by-file-backend.md`.
 
 ## The one loop to memorize (Cycle 1)
 

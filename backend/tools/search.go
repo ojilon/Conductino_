@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 )
 
 // Workspace keyword search. Go-native (no grep/rg on Windows targets),
@@ -37,8 +37,8 @@ func (h *ToolHost) searchWorkspace(query string) ToolResult {
 		return ToolResult{Name: ToolSearchWorkspace, OK: false, Content: "could not list workspace"}
 	}
 	var paths []string
-	var walk func(n *models.FileTreeNode)
-	walk = func(n *models.FileTreeNode) {
+	var walk func(n *model.Node)
+	walk = func(n *model.Node) {
 		if n == nil || len(paths) >= searchMaxFiles {
 			return
 		}
@@ -69,8 +69,8 @@ func (h *ToolHost) searchWorkspace(query string) ToolResult {
 		if err != nil {
 			continue // jail rejection — skip silently, don't leak the path
 		}
-		opened, err := h.Docs.OpenFile(abs, rel)
-		if err != nil || opened.Reason != "" {
+		opened, fail := h.Docs.OpenFile(abs, rel)
+		if fail != nil {
 			continue
 		}
 		scanned++

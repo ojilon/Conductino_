@@ -9,9 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"Conductino/backend/extract"
 	"Conductino/backend/mirror"
-	"Conductino/backend/models"
+	"Conductino/backend/model"
+	"Conductino/backend/read"
+	"Conductino/backend/save"
 )
 
 // Tool names (stable wire identifiers).
@@ -32,18 +33,18 @@ var allowedReadExt = map[string]bool{
 	"txt": true, "md": true, "markdown": true, "pdf": true, "docx": true,
 }
 
-// PathResolver is the workspace containment boundary (Filesystem.Resolve + tree).
+// PathResolver is the workspace containment boundary (list.Library).
 type PathResolver interface {
 	Resolve(path string) (string, error)
 	Root() string
-	ListRoot() (*models.FileTreeNode, error)
+	ListRoot() (*model.Node, error)
 }
 
 // FileOpener extracts displayable content from an absolute path already
 // Resolve-checked by the host. relKey seeds stable block IDs (see
-// extract/ids.go); pass the workspace-relative token.
+// read/stableID); pass the workspace-relative token.
 type FileOpener interface {
-	OpenFile(absPath, relKey string) (models.OpenedDocument, error)
+	OpenFile(absPath, relKey string) (model.Doc, *model.Fail)
 }
 
 // ToolHost holds per-request deps for folder-scoped tools.
@@ -293,7 +294,7 @@ func (h *ToolHost) listWorkspace() ToolResult {
 	return ToolResult{Name: ToolListWorkspace, OK: true, Content: out}
 }
 
-func writeTree(b *strings.Builder, n *models.FileTreeNode, depth int) {
+func writeTree(b *strings.Builder, n *model.Node, depth int) {
 	if n == nil {
 		return
 	}
@@ -350,11 +351,8 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 	if err != nil {
 		return ToolResult{Name: ToolReadSource, OK: false, Content: "path outside workspace or invalid"}
 	}
-	opened, err := h.Docs.OpenFile(abs, rel)
-	if err != nil {
-		return ToolResult{Name: ToolReadSource, OK: false, Content: "could not read file"}
-	}
-	if opened.Reason != "" {
+	opened, fail := h.Docs.OpenFile(abs, rel)
+	if fail != nil {
 		// A missing file after a jail-clean resolve gets suggestions too.
 		if _, suggestions := h.resolveSourcePath(rel); len(suggestions) > 0 {
 			quoted := make([]string, 0, len(suggestions))
@@ -362,9 +360,9 @@ func (h *ToolHost) readSource(rel string) ToolResult {
 				quoted = append(quoted, fmt.Sprintf("%q", s))
 			}
 			return ToolResult{Name: ToolReadSource, OK: false, Content: fmt.Sprintf(
-				"could not read %q (%s) — did you mean: %s?", rel, opened.Detail, strings.Join(quoted, ", "))}
+				"could not read %q (%s) — did you mean: %s?", rel, fail.Detail, strings.Join(quoted, ", "))}
 		}
-		return ToolResult{Name: ToolReadSource, OK: false, Content: opened.Detail}
+		return ToolResult{Name: ToolReadSource, OK: false, Content: fail.Detail}
 	}
 	text := blocksJSONToPlain(opened.BlocksJSON)
 	if len(text) > 6000 {
@@ -504,8 +502,8 @@ func (h *ToolHost) Files() []string {
 		return nil
 	}
 	var out []string
-	var walk func(n *models.FileTreeNode)
-	walk = func(n *models.FileTreeNode) {
+	var walk func(n *model.Node)
+	walk = func(n *model.Node) {
 		if n == nil || len(out) >= searchMaxFiles {
 			return
 		}
@@ -615,15 +613,9 @@ func (h *ToolHost) publishSummary() ToolResult {
 	if strings.TrimSpace(md) == "" {
 		return fail("summary working copy is empty — nothing to publish")
 	}
-	blocks, err := extract.BlocksFromMarkdown(md, rel)
-	if err != nil {
-		return fail("could not shape working copy into blocks: " + err.Error())
-	}
-	wire, err := extract.BlocksToJSON(blocks)
-	if err != nil {
-		return fail("could not encode blocks: " + err.Error())
-	}
-	if _, err := extract.WriteSummaryDOCXPath(h.FS.Root(), rel, wire); err != nil {
+	blocks := read.BlocksFromMarkdown(md, rel)
+	wire := model.MarshalBlocks(blocks)
+	if _, err := save.WriteSummaryDOCXPath(h.FS.Root(), rel, wire); err != nil {
 		return fail("could not write summary file: " + err.Error())
 	}
 	var diffs []PublishedDiff

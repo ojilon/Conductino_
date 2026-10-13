@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"Conductino/backend/model"
 )
 
 func TestJailRejectsEscape(t *testing.T) {
@@ -56,11 +58,14 @@ func TestOpenDumpsJSON(t *testing.T) {
 	if f != nil {
 		t.Fatalf("open failed: %v", f)
 	}
-	raw, err := os.ReadFile(filepath.Join(data, "temporary", "extract_dump", "a.txt.json"))
+	if d.Dump == "" {
+		t.Fatal("open must name its dump file")
+	}
+	raw, err := os.ReadFile(filepath.Join(data, "temporary", "extract_dump", d.Dump))
 	if err != nil {
 		t.Fatalf("dump missing: %v", err)
 	}
-	if string(raw) != d.Blocks {
+	if string(raw) != d.BlocksJSON {
 		t.Fatal("dump must equal returned blocks")
 	}
 }
@@ -70,7 +75,7 @@ func TestUnsupportedType(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lib, "a.xyz"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, f := OpenFile(lib, t.TempDir(), "a.xyz"); f == nil || f.Reason != ReasonUnsupported {
+	if _, f := OpenFile(lib, t.TempDir(), "a.xyz"); f == nil || f.Reason != model.ReasonUnsupported {
 		t.Fatalf("want unsupported, got %v", f)
 	}
 }
@@ -84,7 +89,7 @@ func TestTooLarge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lib, "big.txt"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, f := OpenFile(lib, t.TempDir(), "big.txt"); f == nil || f.Reason != ReasonTooLarge {
+	if _, f := OpenFile(lib, t.TempDir(), "big.txt"); f == nil || f.Reason != model.ReasonTooLarge {
 		t.Fatalf("want too_large, got %v", f)
 	}
 }

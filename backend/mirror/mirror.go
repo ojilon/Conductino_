@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"Conductino/backend/apppaths"
-	"Conductino/backend/extract"
+	"Conductino/backend/read"
 )
 
 // OpLog is one AI edit applied to the mirror (audit, surfaced in read_summary
@@ -160,7 +160,7 @@ func (s *Store) Read(summaryID, snapshot string) (md string, log []OpLog, err er
 		return string(raw), m.Log, nil
 	}
 	// Snapshot moved under the mirror (user edit/save) — re-sync, keep log.
-	md = extract.PlainToMarkdown(snap)
+	md = read.PlainToMarkdown(snap)
 	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
 		return "", nil, err
 	}

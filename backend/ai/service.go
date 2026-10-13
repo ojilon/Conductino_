@@ -1,18 +1,17 @@
-// Package ai is the network-only model access layer (plan 06).
+// Package ai is the network-only model access layer.
 //
-// It depends on backend/tools, backend/extract, backend/usage, and the
+// It depends on backend/tools, backend/read, backend/usage, and the
 // storage interface — never the reverse. Offline work stays testable
 // without API keys; verify with:
-// go list -deps ./backend/extract ./backend/tools ./backend/usage |
+// go list -deps ./backend/read ./backend/tools ./backend/usage |
 //   findstr /i "net/http wails" (expect no output).
 //
 // Layout:
-//   service.go  — AIService interface, New, Run entry, key resolution
-//   backends/   — (plan 05/08) gemini.go, openai_compat.go per-backend files
+//   service.go  — Service interface, New, Run entry, key resolution
 //   gemini.go   — HTTP client against generateContent
+//   openai_compat.go — Groq/OpenRouter backends + tool schemas
 //   prompts.go  — operation → prompt templates and result encoding
 //   chat.go     — multi-turn tool loop (calls tools.ToolHost)
-//   tools_alias.go — one-release aliases (delete per plan 06 step 6)
 package ai
 
 import (
@@ -27,21 +26,22 @@ import (
 	"time"
 
 	"Conductino/backend/apppaths"
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 	"Conductino/backend/mirror"
 	"Conductino/backend/skills"
+	"Conductino/backend/tools"
 	"Conductino/backend/usage"
 	"Conductino/backend/workflows"
 )
 
 // EventSink receives one streaming unit of an AI operation.
-type EventSink func(ev models.AIEvent)
+type EventSink func(ev model.AIEvent)
 
 // Service is the boundary for all model access on the Go side. The key and
 // provider selection belong to the implementation — never to callers, and
 // never to the frontend.
 type Service interface {
-	Run(ctx context.Context, req models.AIRequest, sink EventSink)
+	Run(ctx context.Context, req model.AIRequest, sink EventSink)
 	ProviderName() string
 	// Configured reports whether a usable API key was found at startup.
 	// The UI uses it for the Settings status; Run with no key sinks an
@@ -67,8 +67,8 @@ type GeminiService struct {
 	model  string
 	client *http.Client
 	// Optional workspace tools (Phase 5). Nil → chat still works without tools.
-	fs   PathResolver
-	docs FileOpener
+	fs   tools.PathResolver
+	docs tools.FileOpener
 	// Multi-provider (05-multi-provider-apis.md): optional secondary backends.
 	secondary []ModelBackend
 	mode      string // single | failover | dual | auto
@@ -162,7 +162,7 @@ func loadSecondaryBackends() []ModelBackend {
 }
 
 // NewWithTools builds Gemini with folder-scoped tools (Resolve + OpenFile).
-func NewWithTools(fs PathResolver, docs FileOpener) *GeminiService {
+func NewWithTools(fs tools.PathResolver, docs tools.FileOpener) *GeminiService {
 	g := New()
 	g.fs = fs
 	g.docs = docs
@@ -173,7 +173,7 @@ func NewWithTools(fs PathResolver, docs FileOpener) *GeminiService {
 // [{name, excerpt}] (plan 11 §1: future Skills UI, debugging). Empty array
 // when nothing matches — never an error.
 func (g *GeminiService) MatchedSkills(operation, intent string) string {
-	excerpts := g.matchedSkillExcerpts(models.AIOperation(operation), intent)
+	excerpts := g.matchedSkillExcerpts(model.AIOperation(operation), intent)
 	if len(excerpts) == 0 {
 		return "[]"
 	}
@@ -212,7 +212,7 @@ func (g *GeminiService) UsageMeters() string {
 	if u := usage.UsageSnapshot(); u != "" {
 		parts = append(parts, u)
 	}
-	if t := toolAuditSummary(); t != "" {
+	if t := tools.ToolAuditSummary(); t != "" {
 		parts = append(parts, t)
 	}
 	return strings.Join(parts, "\n")
@@ -464,27 +464,27 @@ func readKeyFile(path, name string) string {
 // with a human-readable message. Every event echoes req.RequestID so the
 // frontend can route concurrent requests on the shared "ai://event" channel.
 // Cancellation via ctx stops the wait/stream promptly.
-func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink EventSink) {
+func (g *GeminiService) Run(ctx context.Context, req model.AIRequest, sink EventSink) {
 	// emit stamps the request correlation ID on every outgoing event.
-	emit := func(ev models.AIEvent) {
+	emit := func(ev model.AIEvent) {
 		ev.RequestID = req.RequestID
 		sink(ev)
 	}
 	if !g.Configured() {
-		emit(models.AIEvent{Type: "error", Message: "AI key missing — add GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY to backend/.ai.env and restart the app."})
+		emit(model.AIEvent{Type: "error", Message: "AI key missing — add GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY to backend/.ai.env and restart the app."})
 		return
 	}
-	op := models.AIOperation(strings.ToUpper(strings.TrimSpace(req.Operation)))
-	if op == models.OpSearch {
+	op := model.AIOperation(strings.ToUpper(strings.TrimSpace(req.Operation)))
+	if op == model.OpSearch {
 		// Browser web search has no backing service behind this boundary;
 		// report it instead of fabricating a ranking.
-		emit(models.AIEvent{Type: "error", Message: "Web search is not connected — AI Browse cannot run yet."})
+		emit(model.AIEvent{Type: "error", Message: "Web search is not connected — AI Browse cannot run yet."})
 		return
 	}
 
 	// Phase 5: chat uses the tool loop when filesystem tools are wired.
-	if op == models.OpChat {
-		host := &ToolHost{
+	if op == model.OpChat {
+		host := &tools.ToolHost{
 			FS:               g.fs,
 			Docs:             g.docs,
 			SummaryText:      req.SummaryContent,
@@ -499,23 +499,23 @@ func (g *GeminiService) Run(ctx context.Context, req models.AIRequest, sink Even
 
 	prompt, kind, maxTokens := g.buildPromptFor(op, req)
 	if prompt == "" {
-		emit(models.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
+		emit(model.AIEvent{Type: "error", Message: fmt.Sprintf("Unknown AI operation %q.", req.Operation)})
 		return
 	}
 	// Repeatable one-shots skip the network on a fresh cache hit (plan 05
 	// §3.4). Chat and merges are never cached — they must stay fresh.
 	if cached, ok := usage.ExplainCacheGet(op, req); ok {
-		emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, cached)})
+		emit(model.AIEvent{Type: "done", Payload: encodeResult(kind, cached)})
 		return
 	}
-	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
+	emit(model.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
 	text, err := g.generateMetered(ctx, op, prompt, maxTokens, func(label string) {
-		emit(models.AIEvent{Type: "phase", Label: label})
+		emit(model.AIEvent{Type: "phase", Label: label})
 	})
 	if err != nil {
-		emit(models.AIEvent{Type: "error", Message: err.Error()})
+		emit(model.AIEvent{Type: "error", Message: err.Error()})
 		return
 	}
 	usage.ExplainCachePut(op, req, text)
-	emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, text)})
+	emit(model.AIEvent{Type: "done", Payload: encodeResult(kind, text)})
 }

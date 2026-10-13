@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"Conductino/backend/extract"
 	"Conductino/backend/mirror"
-	"Conductino/backend/models"
+	"Conductino/backend/model"
+	"Conductino/backend/read"
 )
 
 func TestParseToolCalls(t *testing.T) {
@@ -46,10 +46,10 @@ func (f *fakeFS) Resolve(path string) (string, error) {
 	}
 	return f.root + "/" + path, nil
 }
-func (f *fakeFS) ListRoot() (*models.FileTreeNode, error) {
-	return &models.FileTreeNode{
+func (f *fakeFS) ListRoot() (*model.Node, error) {
+	return &model.Node{
 		ID: ".", Kind: "folder", Label: "ws",
-		Children: []models.FileTreeNode{
+		Children: []model.Node{
 			{ID: "a.txt", Kind: "file", Label: "a.txt", Ext: "txt", Path: "a.txt"},
 		},
 	}, nil
@@ -63,8 +63,8 @@ func (e errString) Error() string { return string(e) }
 
 type fakeDocs struct{}
 
-func (fakeDocs) OpenFile(absPath, relKey string) (models.OpenedDocument, error) {
-	return models.OpenedDocument{
+func (fakeDocs) OpenFile(absPath, relKey string) (model.Doc, *model.Fail) {
+	return model.Doc{
 		Title:      "a",
 		BlocksJSON: `{"blocks":[{"id":"1","type":"paragraph","segments":[{"text":"hello tool"}]}]}`,
 		Kind:       "text",
@@ -148,10 +148,10 @@ func (f *suggestFS) Resolve(path string) (string, error) {
 	}
 	return "", errOutside
 }
-func (f *suggestFS) ListRoot() (*models.FileTreeNode, error) {
-	root := &models.FileTreeNode{ID: ".", Kind: "folder", Label: "ws"}
+func (f *suggestFS) ListRoot() (*model.Node, error) {
+	root := &model.Node{ID: ".", Kind: "folder", Label: "ws"}
 	for _, x := range f.files {
-		root.Children = append(root.Children, models.FileTreeNode{
+		root.Children = append(root.Children, model.Node{
 			ID: x, Kind: "file", Label: filepath.Base(x),
 			Ext: strings.TrimPrefix(filepath.Ext(x), "."), Path: x,
 		})
@@ -304,10 +304,9 @@ func TestPublishSummaryWritesDocx(t *testing.T) {
 		t.Fatalf("report: %+v", r)
 	}
 	// The .docx on disk re-extracts with snapshot + proposal content.
-	d := extract.NewDocuments()
-	opened, err := d.OpenFile(filepath.Join(dir, "Summary.docx"), "Summary.docx")
-	if err != nil || opened.Reason != "" {
-		t.Fatalf("reopen: %+v %v", opened, err)
+	opened, fail := read.OpenDirect(filepath.Join(dir, "Summary.docx"), "Summary.docx", "")
+	if fail != nil {
+		t.Fatalf("reopen: %v", fail)
 	}
 	if plain := blocksJSONToPlain(opened.BlocksJSON); !strings.Contains(plain, "Alpha") || !strings.Contains(plain, "Beta") {
 		t.Fatalf("round trip: %q", plain)

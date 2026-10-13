@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 	"Conductino/backend/usage"
 )
 
@@ -15,7 +15,7 @@ import (
 // cost class + telemetry.
 func (g *GeminiService) generateMetered(
 	ctx context.Context,
-	op models.AIOperation,
+	op model.AIOperation,
 	prompt string,
 	maxTokens int,
 	emitPhase func(label string),

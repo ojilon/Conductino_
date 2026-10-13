@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"Conductino/backend/tools"
 )
 
 // Native tool_calls must round-trip through the internal tag form,
@@ -14,7 +16,7 @@ func TestToolCallToTagRoundTrip(t *testing.T) {
 	tc.Function.Name = "propose_summary_edit"
 	tc.Function.Arguments = `{"op":"modify","target":"b-1","text":"say \"hi\" now"}`
 	tag := toolCallToTag(tc)
-	calls := ParseToolCalls("answer\n" + tag + "\ndone")
+	calls := tools.ParseToolCalls("answer\n" + tag + "\ndone")
 	if len(calls) != 1 {
 		t.Fatalf("want 1 call, got %d in %q", len(calls), tag)
 	}
@@ -53,7 +55,7 @@ func TestToolSchemasMirrorRegistry(t *testing.T) {
 	for _, s := range schemas {
 		seen[s.Function.Name] = true
 	}
-	for _, want := range []string{ToolListWorkspace, ToolReadSource, ToolReadSummary, ToolProposeSummaryEdit, ToolSearchWorkspace, ToolRunWorkflow, ToolPublishSummary} {
+	for _, want := range []string{tools.ToolListWorkspace, tools.ToolReadSource, tools.ToolReadSummary, tools.ToolProposeSummaryEdit, tools.ToolSearchWorkspace, tools.ToolRunWorkflow, tools.ToolPublishSummary} {
 		if !seen[want] {
 			t.Fatalf("schema missing for %s", want)
 		}

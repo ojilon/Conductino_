@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
+	"Conductino/backend/tools"
 )
 
 const (
@@ -21,22 +22,22 @@ const (
 
 // runChatWithTools runs AI_CHAT with an optional tool loop:
 // model may emit <tool …/> tags; we execute guarded tools, re-prompt, then finish.
-func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIRequest, host *ToolHost, emit func(models.AIEvent)) {
-	prompt, kind, maxTokens := g.buildPromptFor(models.OpChat, req)
+func (g *GeminiService) runChatWithTools(ctx context.Context, req model.AIRequest, host *tools.ToolHost, emit func(model.AIEvent)) {
+	prompt, kind, maxTokens := g.buildPromptFor(model.OpChat, req)
 	if host != nil && host.FS != nil {
-		prompt = prompt + "\n\n" + ToolCatalog()
+		prompt = prompt + "\n\n" + tools.ToolCatalog()
 	}
 	if prompt == "" {
-		emit(models.AIEvent{Type: "error", Message: "Could not build chat prompt."})
+		emit(model.AIEvent{Type: "error", Message: "Could not build chat prompt."})
 		return
 	}
 
-	emit(models.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
-	text, err := g.generateMetered(ctx, models.OpChat, prompt, maxTokens, func(label string) {
-		emit(models.AIEvent{Type: "phase", Label: label})
+	emit(model.AIEvent{Type: "phase", Phase: 0, Label: "Contacting AI"})
+	text, err := g.generateMetered(ctx, model.OpChat, prompt, maxTokens, func(label string) {
+		emit(model.AIEvent{Type: "phase", Label: label})
 	})
 	if err != nil {
-		emit(models.AIEvent{Type: "error", Message: err.Error()})
+		emit(model.AIEvent{Type: "error", Message: err.Error()})
 		return
 	}
 
@@ -49,7 +50,7 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 	// proposed-but-unwritten turn can quote the publish failure, if any.
 	var lastResults []string
 	for round := 0; round < maxToolRounds && toolsUsed < maxToolsPerTurn; round++ {
-		calls := ParseToolCalls(text)
+		calls := tools.ParseToolCalls(text)
 		if len(calls) == 0 || host == nil {
 			break
 		}
@@ -59,11 +60,11 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 				break // hard cap per round and per turn
 			}
 			toolsUsed++
-			emit(models.AIEvent{Type: "phase", Phase: 1 + round, Label: fmt.Sprintf("Tool: %s", c.Name)})
+			emit(model.AIEvent{Type: "phase", Phase: 1 + round, Label: fmt.Sprintf("Tool: %s", c.Name)})
 			started := time.Now()
 			r := host.Dispatch(c.Name, c.Args)
 			turnTrace = append(turnTrace, aiToolCall{Tool: c.Name, OK: r.OK, Ms: time.Since(started).Milliseconds()})
-			auditTool(c.Name, c.Args, r.OK) // issue 17: name + path only, never content
+			tools.AuditTool(c.Name, c.Args, r.OK) // issue 17: name + path only, never content
 			status := "ok"
 			if !r.OK {
 				status = "error"
@@ -71,21 +72,21 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 			results = append(results, fmt.Sprintf("### Tool result (%s, %s)\n%s", r.Name, status, r.Content))
 		}
 		lastResults = results
-		emit(models.AIEvent{Type: "phase", Phase: 2 + round, Label: "Integrating tool results"})
+		emit(model.AIEvent{Type: "phase", Phase: 2 + round, Label: "Integrating tool results"})
 		follow := prompt + "\n\n### Previous model output\n" + text + "\n\n" +
 			strings.Join(results, "\n\n") +
 			"\n\n### Instruction\nUsing the tool results above, answer the user. Do not invent file contents. " +
 			"If you still need a tool, emit at most one more tool tag; otherwise reply in plain prose only."
-		text, err = g.generateMetered(ctx, models.OpChat, follow, maxTokens, func(label string) {
-			emit(models.AIEvent{Type: "phase", Label: label})
+		text, err = g.generateMetered(ctx, model.OpChat, follow, maxTokens, func(label string) {
+			emit(model.AIEvent{Type: "phase", Label: label})
 		})
 		if err != nil {
-			emit(models.AIEvent{Type: "error", Message: err.Error()})
+			emit(model.AIEvent{Type: "error", Message: err.Error()})
 			return
 		}
 	}
 
-	clean := StripToolTags(text)
+	clean := tools.StripToolTags(text)
 	if clean == "" {
 		clean = strings.TrimSpace(text)
 	}
@@ -96,7 +97,7 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 	// Published summaries ride along so the UI reloads each file and
 	// decorates the write-through diffs in-file.
 	if host != nil {
-		var props []proposal
+		var props []tools.Proposal
 		for _, p := range host.Proposals() {
 			if strings.TrimSpace(p.NewText) != "" || p.Op == "delete" {
 				props = append(props, p)
@@ -109,11 +110,11 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 		published := host.PublishedDocs()
 		autoErr := ""
 		if len(props) > 0 && len(published) == 0 && host.CanPublish() {
-			emit(models.AIEvent{Type: "phase", Phase: 3, Label: "Publishing summary"})
+			emit(model.AIEvent{Type: "phase", Phase: 3, Label: "Publishing summary"})
 			started := time.Now()
-			r := host.Dispatch(ToolPublishSummary, map[string]string{})
-			turnTrace = append(turnTrace, aiToolCall{Tool: ToolPublishSummary, OK: r.OK, Ms: time.Since(started).Milliseconds()})
-			auditTool(ToolPublishSummary, map[string]string{}, r.OK)
+			r := host.Dispatch(tools.ToolPublishSummary, map[string]string{})
+			turnTrace = append(turnTrace, aiToolCall{Tool: tools.ToolPublishSummary, OK: r.OK, Ms: time.Since(started).Milliseconds()})
+			tools.AuditTool(tools.ToolPublishSummary, map[string]string{}, r.OK)
 			if r.OK {
 				published = host.PublishedDocs()
 			} else {
@@ -129,21 +130,21 @@ func (g *GeminiService) runChatWithTools(ctx context.Context, req models.AIReque
 			publishedOut = append(publishedOut, aiPublishedSummary{SummaryID: pub.SummaryID, Path: pub.Path, Diffs: diffs})
 		}
 		if len(props) > 0 || len(publishedOut) > 0 {
-			emit(models.AIEvent{Type: "done", Payload: encodeChatWithProposals(clean, props, turnTrace, publishedOut)})
+			emit(model.AIEvent{Type: "done", Payload: encodeChatWithProposals(clean, props, turnTrace, publishedOut)})
 			return
 		}
 		// Proposed but nothing written: tell the UI exactly why (no mapped
 		// summary, no file path, or a failed publish) so it toasts the fix
 		// instead of leaving the user staring at an unchanged file.
 		if len(props) > 0 {
-			emit(models.AIEvent{Type: "done", Payload: encodeChatWithProposals(clean, props, turnTrace, nil, publishFailure(host, lastResults, autoErr))})
+			emit(model.AIEvent{Type: "done", Payload: encodeChatWithProposals(clean, props, turnTrace, nil, publishFailure(host, lastResults, autoErr))})
 			return
 		}
 	}
-	emit(models.AIEvent{Type: "done", Payload: encodeResult(kind, clean)})
+	emit(model.AIEvent{Type: "done", Payload: encodeResult(kind, clean)})
 }
 
-func encodeChatWithProposals(explanation string, props []proposal, trace []aiToolCall, published []aiPublishedSummary, publishErr ...string) string {
+func encodeChatWithProposals(explanation string, props []tools.Proposal, trace []aiToolCall, published []aiPublishedSummary, publishErr ...string) string {
 	res := aiResult{Explanation: strings.TrimSpace(explanation), ToolTrace: trace, Published: published}
 	if len(published) == 0 && len(props) > 0 && len(publishErr) > 0 && strings.TrimSpace(publishErr[0]) != "" {
 		res.PublishError = strings.TrimSpace(publishErr[0])
@@ -172,12 +173,12 @@ func encodeChatWithProposals(explanation string, props []proposal, trace []aiToo
 	return string(b)
 }
 
-func encodeChatWithProposal(explanation string, prop proposal) string {
-	return encodeChatWithProposals(explanation, []proposal{prop}, nil, nil)
+func encodeChatWithProposal(explanation string, prop tools.Proposal) string {
+	return encodeChatWithProposals(explanation, []tools.Proposal{prop}, nil, nil)
 }
 
 // publishFailure explains a proposed-but-unwritten turn for the user toast.
-func publishFailure(host *ToolHost, results []string, autoErr string) string {
+func publishFailure(host *tools.ToolHost, results []string, autoErr string) string {
 	if host == nil {
 		return "publishing unavailable in this turn"
 	}

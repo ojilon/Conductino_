@@ -5,36 +5,36 @@ import (
 	"testing"
 	"time"
 
-	"Conductino/backend/models"
+	"Conductino/backend/model"
 )
 
 func TestCostClass(t *testing.T) {
-	if got := CostClass(models.OpRewrite, 100); got != "S" {
+	if got := CostClass(model.OpRewrite, 100); got != "S" {
 		t.Fatalf("rewrite = %s, want S", got)
 	}
-	if got := CostClass(models.OpChat, 100); got != "L" {
+	if got := CostClass(model.OpChat, 100); got != "L" {
 		t.Fatalf("chat = %s, want L", got)
 	}
-	if got := CostClass(models.OpExplain, 100); got != "M" {
+	if got := CostClass(model.OpExplain, 100); got != "M" {
 		t.Fatalf("explain = %s, want M", got)
 	}
-	if got := CostClass(models.OpExplain, 9000); got != "L" {
+	if got := CostClass(model.OpExplain, 9000); got != "L" {
 		t.Fatalf("big explain = %s, want L", got)
 	}
 }
 
 func TestExplainCacheRoundTrip(t *testing.T) {
-	req := models.AIRequest{DocumentID: "d", BlockID: "b", SelectionText: "hello cache"}
-	if _, ok := ExplainCacheGet(models.OpExplain, req); ok {
+	req := model.AIRequest{DocumentID: "d", BlockID: "b", SelectionText: "hello cache"}
+	if _, ok := ExplainCacheGet(model.OpExplain, req); ok {
 		t.Fatal("unexpected hit on empty cache")
 	}
-	ExplainCachePut(models.OpExplain, req, "cached answer")
-	if got, ok := ExplainCacheGet(models.OpExplain, req); !ok || got != "cached answer" {
+	ExplainCachePut(model.OpExplain, req, "cached answer")
+	if got, ok := ExplainCacheGet(model.OpExplain, req); !ok || got != "cached answer" {
 		t.Fatalf("miss after put: %q %v", got, ok)
 	}
 	// Chat and merges never cache.
-	ExplainCachePut(models.OpChat, req, "nope")
-	if _, ok := ExplainCacheGet(models.OpChat, req); ok {
+	ExplainCachePut(model.OpChat, req, "nope")
+	if _, ok := ExplainCacheGet(model.OpChat, req); ok {
 		t.Fatal("chat must never hit cache")
 	}
 }

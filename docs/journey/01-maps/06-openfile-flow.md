@@ -1,10 +1,10 @@
-# 01-06 OpenFile flow: resolve -> cache -> extract -> blocks
+# 01-06 OpenFile flow: resolve -> cache -> extract -> dump -> read back
 
 Goal / Non-goal / Where in code / Concept / Flow / Rewrite options / Exercise / Done when.
 
-Goal: trace file open with cache. Non-goal: new extractors yet.
-Where in code: `backend/main.go:73 OpenFile`, `:90 cacheKey=root+path`, `storage GetCachedExtract/PutCachedExtract`, `services/documents.go`, `blockids.go` (content-addressed IDs).
-Concept (Go): `os.Stat` mtime+size as cache key; best-effort cache (failure falls through).
-Flow: Resolve -> stat -> cache hit? return : extract -> ParseBlocksJSON shape -> cache store -> OpenedDocument{Title,BlocksJSON,PageCount,Kind,Root}.
-Exercise: open same .txt twice, add log to prove second hit skips extraction.
-Done when: you can state cache key + invalidation rule.
+Goal: trace file open with cache + dump. Non-goal: new extractors yet.
+Where in code: `backend/main.go` OpenFile, `cacheKey=root+"\x00"+path`, store `GetCachedExtract/PutCachedExtract`, `backend/read/open.go` dispatch, `dump.go` DumpFor (root-scoped names), `frontend/app.go` ReadDumpFile, `ReaderMode.tsx` openFile.
+Concept (Go): `os.Stat` mtime+size as cache key; best-effort cache (failure falls through); content ALWAYS lands in `temporary/extract_dump/`, UI reads it back by name.
+Flow: Resolve -> stat -> cache hit? dump+return : extract -> cache store -> dump -> Doc{Title, Dump, PageCount, Kind, Root} -> ReadDumpFile -> parse -> render.
+Exercise: open same .txt twice (second hit skips extraction); delete a dump mid-session, reopen, watch it recreated.
+Done when: you can state cache key + invalidation rule + why inline JSON is cleared.

@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
-import { backend, loadWorkspaceThreads, type OpenedFile } from "../../services/backend";
+import { backend, loadWorkspaceThreads, readDumpFile, type OpenedFile } from "../../services/backend";
 import { EmptyState, ResizablePanel } from "../../components/ui";
 import { Icon } from "../../components/icons";
 import { isStaleRoot, uid } from "../../utils/helpers";
@@ -191,8 +191,23 @@ export default function ReaderMode() {
     }
     let blocks: DocumentBlock[];
     let firstText = "";
+    // Dump-backed transfer: content arrives as a dump NAME, read back from
+    // disk. Inline blocksJSON survives only for old desktop builds.
+    let blocksJSON = opened.blocksJSON;
+    if (!blocksJSON && !opened.dump) {
+      dispatch({ type: "toast", message: `Could not open ${node.label}: unexpected content from the extractor` });
+      return;
+    }
+    if (opened.dump) {
+      try {
+        blocksJSON = await readDumpFile(opened.dump);
+      } catch {
+        dispatch({ type: "toast", message: `Could not open ${node.label}: extracted content unreadable` });
+        return;
+      }
+    }
     try {
-      const parsed: unknown = JSON.parse(opened.blocksJSON);
+      const parsed: unknown = JSON.parse(blocksJSON);
       const raw = (parsed as { blocks: DocumentBlock[] }).blocks;
       if (!Array.isArray(raw)) throw new Error("bad blocks shape");
       // Normalize: Go nil slices marshal to JSON null, and any single null
