@@ -5,6 +5,11 @@
 > Every track teaches the Go / TypeScript concept first, then maps it to this repo's
 > real files, then gives you a rewrite exercise where YOU change the code.
 
+## Active backend redo (you are here)
+
+- `backend-redo/PLAN.md` — logic-by-logic rewrite plan, new packages beside old ones.
+- `backend-redo/cycle-01-open-file.md` — current step: click → contents loop in `backend/read`.
+
 ## Where to start
 
 1. `journey/README.md` — the 8-week calendar, daily loop, and review gates.
