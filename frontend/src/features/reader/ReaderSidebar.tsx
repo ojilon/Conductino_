@@ -14,6 +14,12 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../state/appState";
 import { backend } from "../../services/backend";
+import {
+  createWorkspaceFile,
+  createWorkspaceFolder,
+  renameWorkspaceFile,
+  setSummaryTargetFile,
+} from "../../services/backend";
 import type { Document, FileTreeNode, RailView } from "../../types/domain";
 import { Icon, type IconName } from "../../components/icons";
 import { Button, EmptyState } from "../../components/ui";
@@ -32,17 +38,116 @@ const RAIL: { id: RailView; icon: IconName; label: string }[] = [
 /* File tree (Workspace-owned library: backend.library.list)             */
 /* ------------------------------------------------------------------ */
 
+/** Join a folder token + a name into a workspace-relative path token. */
+function joinToken(folderToken: string, name: string): string {
+  const clean = name.trim().replace(/^[/\\]+|[/\\]+$/g, "");
+  return folderToken ? `${folderToken}/${clean}` : clean;
+}
+
+/**
+ * Tree file operations (create / rename / summary target / reveal).
+ * Shared by the tree's right-click menu and the Library panel's "+ New"
+ * buttons. Everything goes through the Go bridge (resolve-jailed); after a
+ * successful op the tree is refreshed by the caller-supplied callbacks.
+ */
+function useTreeActions(onTreeChanged: () => void, onTargetChanged: () => void) {
+  const { dispatch } = useApp();
+  const fail = (what: string, e: unknown) =>
+    dispatch({ type: "toast", message: `${what}: ${e instanceof Error ? e.message : String(e)}` });
+  const noBridge = (what: string) =>
+    dispatch({ type: "toast", message: `${what} needs the desktop app — run \`wails dev\`.` });
+
+  return {
+    /** Create an empty file (.docx gets a valid empty Word package). */
+    createFile: async (folderToken: string, suggested = "Untitled.docx") => {
+      const name = window.prompt("New file name (.docx, .txt or .md):", suggested);
+      if (!name?.trim()) return;
+      try {
+        const created = await createWorkspaceFile(joinToken(folderToken, name));
+        if (!created) return noBridge("Creating files");
+        dispatch({ type: "toast", message: `Created ${created}` });
+        onTreeChanged();
+      } catch (e) {
+        fail("Create failed", e);
+      }
+    },
+    /** Create a folder. */
+    createFolder: async (folderToken: string) => {
+      const name = window.prompt("New folder name:", "my-notes");
+      if (!name?.trim()) return;
+      try {
+        const created = await createWorkspaceFolder(joinToken(folderToken, name));
+        if (!created) return noBridge("Creating folders");
+        dispatch({ type: "toast", message: `Created folder ${created}` });
+        onTreeChanged();
+      } catch (e) {
+        fail("Create failed", e);
+      }
+    },
+    /** Rename a file/folder in place (new base name only). */
+    rename: async (token: string, label: string) => {
+      const name = window.prompt("New name:", label);
+      if (!name?.trim() || name.trim() === label) return;
+      try {
+        const renamed = await renameWorkspaceFile(token, name.trim());
+        if (!renamed) return noBridge("Renaming");
+        dispatch({ type: "toast", message: `Renamed to ${renamed}` });
+        onTreeChanged();
+      } catch (e) {
+        fail("Rename failed", e);
+      }
+    },
+    /** Mark a .docx as THE workspace summary target (all summaries go there). */
+    makeSummaryTarget: async (token: string, label: string) => {
+      try {
+        const ok = await setSummaryTargetFile(token);
+        if (!ok) return noBridge("Setting the summary target");
+        dispatch({
+          type: "toast",
+          message: `"${label}" is now the target summary document — all summaries are siphoned into it`,
+        });
+        onTargetChanged();
+      } catch (e) {
+        fail("Could not set the summary target", e);
+      }
+    },
+    /** Reveal in the OS file manager. */
+    reveal: async (token: string) => {
+      const r = await backend.filesystem.showContainingFolder(token);
+      dispatch({ type: "toast", message: r.note });
+    },
+  };
+}
+
+/** One right-click menu entry in the file tree. */
+interface TreeMenuTarget {
+  token: string; // workspace-relative path token
+  label: string;
+  kind: "folder" | "file";
+  ext?: string;
+  x: number;
+  y: number;
+}
+
 function FileTree({
   node,
   onFile,
   focusPath,
   onFocusDone,
+  summaryTarget,
+  onTreeChanged,
+  onTargetChanged,
 }: {
   node: FileTreeNode;
   onFile: (n: FileTreeNode & { path: string }) => void;
   /** Path token to expand + highlight + scroll to (from "Show in library"). */
   focusPath?: string | null;
   onFocusDone?: () => void;
+  /** Marked summary-target .docx (starred in the tree). */
+  summaryTarget?: string | null;
+  /** Refresh callbacks after create/rename/target ops. */
+  onTreeChanged: () => void;
+  onTargetChanged: () => void;
 }) {
   // Open/active state is keyed by TOKEN (n.path ?? label-built prefix), not
   // by id: tokens are the stable cross-world identity (real trees use them
@@ -50,6 +155,8 @@ function FileTree({
   // line up).
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [activeToken, setActiveToken] = useState<string>("");
+  const [menu, setMenu] = useState<TreeMenuTarget | null>(null);
+  const actions = useTreeActions(onTreeChanged, onTargetChanged);
 
   const tokenOf = (n: FileTreeNode, path: string) => n.path ?? (path ? `${path}/${n.label}` : n.label);
 
@@ -85,8 +192,21 @@ function FileTree({
     onFocusDone?.();
   }, [focusPath, node]);
 
+  // Right-click anywhere else closes the tree menu.
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+    };
+  }, [menu]);
+
   const walk = (n: FileTreeNode, path: string, d: number) => {
     const token = tokenOf(n, path);
+    const isTarget = !!summaryTarget && token === summaryTarget;
     return (
       <div key={n.id}>
         <button
@@ -99,6 +219,11 @@ function FileTree({
               setActiveToken(token);
               onFile({ ...n, path: token });
             }
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenu({ token, label: n.label, kind: n.kind, ext: n.ext, x: e.clientX, y: e.clientY });
           }}
           className={cn(
             "flex w-full items-center gap-1.5 rounded-md py-[5px] pr-2 text-left text-[12.5px] transition-colors",
@@ -121,13 +246,70 @@ function FileTree({
             </>
           )}
           <span className="truncate">{n.label}</span>
+          {isTarget && (
+            <span title="Workspace summary target — all summaries are siphoned into this file" className="ml-auto shrink-0 text-amber-500">
+              ★
+            </span>
+          )}
         </button>
         {n.kind === "folder" && open[token] && n.children?.map((c) => walk(c, token, d + 1))}
       </div>
     );
   };
 
-  return <div>{node.children?.map((c) => walk(c, "", 0))}</div>;
+  const menuItem = (label: string, onClick: () => void, danger = false) => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        setMenu(null);
+        onClick();
+      }}
+      className={cn(
+        "w-full rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors",
+        danger ? "text-rose-600 hover:bg-rose-50" : "text-ink-700 hover:bg-cream-100",
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div>
+      {node.children?.map((c) => walk(c, "", 0))}
+      {menu && (
+        <div
+          data-tree-menu
+          className="fade-in fixed z-50 w-[240px] rounded-xl border border-line bg-white p-1.5 shadow-xl shadow-ink-900/10"
+          style={{
+            left: Math.max(8, Math.min(menu.x, window.innerWidth - 250)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - 260)),
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <p className="truncate px-2.5 pb-1 pt-0.5 text-[10.5px] uppercase tracking-wide text-mute">{menu.label}</p>
+          {menu.kind === "folder" ? (
+            <>
+              {menuItem("New Word document (.docx)", () => void actions.createFile(menu.token, "Summary.docx"))}
+              {menuItem("New text file (.txt)", () => void actions.createFile(menu.token, "notes.txt"))}
+              {menuItem("New markdown file (.md)", () => void actions.createFile(menu.token, "notes.md"))}
+              {menuItem("New folder…", () => void actions.createFolder(menu.token))}
+              {menuItem("Rename…", () => void actions.rename(menu.token, menu.label))}
+              {menuItem("Show in folder", () => void actions.reveal(menu.token))}
+            </>
+          ) : (
+            <>
+              {menuItem("Rename…", () => void actions.rename(menu.token, menu.label))}
+              {(menu.ext ?? "").toLowerCase() === "docx" &&
+                menuItem("★ Make this the target summary document", () => void actions.makeSummaryTarget(menu.token, menu.label))}
+              {menuItem("Show in folder", () => void actions.reveal(menu.token))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +502,8 @@ function LibraryPanel({
   onFile,
   focusPath,
   onFocusDone,
+  summaryTarget,
+  onTargetChanged,
 }: {
   /** undefined = loading, null = no folder yet — owned by ReaderMode. */
   tree: FileTreeNode | null | undefined;
@@ -329,11 +513,38 @@ function LibraryPanel({
   onFile: (n: FileTreeNode & { path: string }) => void;
   focusPath: string | null;
   onFocusDone: () => void;
+  /** Marked summary-target .docx path (starred in the tree). */
+  summaryTarget: string | null;
+  onTargetChanged: () => void;
 }) {
+  const actions = useTreeActions(onRefreshTree, onTargetChanged);
   return (
     <div className="fade-in space-y-4 px-4 py-4">
       <section>
-        <h4 className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-mute">Library</h4>
+        <div className="mb-1.5 flex items-center justify-between px-1">
+          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-mute">Library</h4>
+          {/* Create at the workspace root; right-click any folder for more. */}
+          {tree && (
+            <span className="flex gap-1">
+              <button
+                type="button"
+                title="New file in the workspace root"
+                onClick={() => void actions.createFile("", "Untitled.docx")}
+                className="rounded-md px-1.5 py-0.5 text-[11px] text-mute hover:bg-cream-100 hover:text-ink-900"
+              >
+                + File
+              </button>
+              <button
+                type="button"
+                title="New folder in the workspace root"
+                onClick={() => void actions.createFolder("")}
+                className="rounded-md px-1.5 py-0.5 text-[11px] text-mute hover:bg-cream-100 hover:text-ink-900"
+              >
+                + Folder
+              </button>
+            </span>
+          )}
+        </div>
         {treeError ? (
           <div className="rounded-lg border border-line-soft bg-cream-50 px-3 py-3">
             <p className="text-[12px] text-ink-700">Couldn’t load the library: {treeError}</p>
@@ -353,7 +564,18 @@ function LibraryPanel({
         ) : (
           <>
             <p className="mb-1 truncate px-1 text-[11px] text-mute">{tree.label}</p>
-            <FileTree node={tree} onFile={onFile} focusPath={focusPath} onFocusDone={onFocusDone} />
+            <FileTree
+              node={tree}
+              onFile={onFile}
+              focusPath={focusPath}
+              onFocusDone={onFocusDone}
+              summaryTarget={summaryTarget}
+              onTreeChanged={onRefreshTree}
+              onTargetChanged={onTargetChanged}
+            />
+            <p className="mt-2 px-1 text-[10.5px] leading-relaxed text-mute">
+              Right-click a file or folder to create, rename, or mark the ★ summary target.
+            </p>
           </>
         )}
       </section>
@@ -379,6 +601,8 @@ export default function ReaderSidebar({
   onLocateDone,
   onShowInLibrary,
   currentRoot,
+  summaryTarget,
+  onSummaryTargetChanged,
 }: {
   doc: Document | undefined;
   onOpenFile: (n: FileTreeNode & { path: string }) => void;
@@ -393,6 +617,10 @@ export default function ReaderSidebar({
   onShowInLibrary: (path: string, rootPath?: string) => void;
   /** Absolute workspace root for stale-tab detection (tasks.md 1.1 option b). */
   currentRoot: string | null;
+  /** Marked summary-target .docx (starred in the tree). */
+  summaryTarget: string | null;
+  /** Re-fetch the target marker after the user marks a new one. */
+  onSummaryTargetChanged: () => void;
 }) {
   const { state, dispatch } = useApp();
   const ui = state.reader.ui;
@@ -467,6 +695,8 @@ export default function ReaderSidebar({
                 onFile={onOpenFile}
                 focusPath={locatePath}
                 onFocusDone={onLocateDone}
+                summaryTarget={summaryTarget}
+                onTargetChanged={onSummaryTargetChanged}
               />
             )}
 

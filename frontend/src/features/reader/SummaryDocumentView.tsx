@@ -17,7 +17,7 @@ import { Icon } from "../../components/icons";
 import { Badge } from "../../components/ui";
 import { cn } from "../../utils/cn";
 import { uid } from "../../utils/helpers";
-import { paginateBlocks } from "./DocumentView";
+import { paginateBlocks } from "./MirrorCanvas";
 
 /* ------------------------------------------------------------------ */
 /* DocxCanvas — Word-like direct editing (no Slate)                      */

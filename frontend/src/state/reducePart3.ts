@@ -58,6 +58,22 @@ export function reducePart3(state: AppState, action: Action): AppState | null {
         highlights: [...doc.highlights, action.highlight],
       }));
 
+    // "Save permanently" (patch, e.g. clear pending) / recolor a highlight.
+    case "doc.highlight.update":
+      return patchDoc(state, action.documentId, (doc) => ({
+        ...doc,
+        highlights: doc.highlights.map((h) =>
+          h.id === action.highlightId ? { ...h, ...action.patch } : h,
+        ),
+      }));
+
+    // "Remove highlight" from the right-click menu.
+    case "doc.highlight.remove":
+      return patchDoc(state, action.documentId, (doc) => ({
+        ...doc,
+        highlights: doc.highlights.filter((h) => h.id !== action.highlightId),
+      }));
+
     case "change.propose": {
       const withChange: AppState = {
         ...state,

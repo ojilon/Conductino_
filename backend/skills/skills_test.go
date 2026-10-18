@@ -19,7 +19,9 @@ func TestParseStarterSkill(t *testing.T) {
 	if s.Name != "summarize-source" || s.Version != 3 {
 		t.Fatalf("identity: %+v", s)
 	}
-	if len(s.Tools) != 6 || s.Tools[0] != "run_workflow" || s.Tools[5] != "publish_summary" {
+	// Mirror-pipeline wiring: the tools list gained read_mirror +
+	// get_summary_target — order kept: run_workflow first, publish last.
+	if len(s.Tools) != 8 || s.Tools[0] != "run_workflow" || s.Tools[7] != "publish_summary" {
 		t.Fatalf("tools: %v", s.Tools)
 	}
 	if s.Budgets["maxToolCalls"] != 8 || s.Budgets["maxChars"] != 6000 {

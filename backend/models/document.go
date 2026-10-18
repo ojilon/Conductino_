@@ -59,6 +59,17 @@ type OpenedDocument struct {
 	BlocksJSON string `json:"blocksJSON"`
 	PageCount  int    `json:"pageCount,omitempty"`
 	Kind       string `json:"kind,omitempty"` // "text" for the plain-text arm
+	// Mirror pair (backend/docpipe): the format-free content.json and the
+	// metadata meta.json, as compact JSON strings. The frontend canvas
+	// renders from MirrorJSON and mirrors the source LOOK from MetaJSON
+	// (page size, fonts, margins, per-page block map). Both are also saved
+	// on disk under the app-data cache for the AI (read_mirror) and the
+	// save bridge (SaveDocumentMirror). Empty when mirroring failed — the
+	// blocks JSON above always works on its own (graceful degradation).
+	MirrorJSON string `json:"mirrorJSON,omitempty"`
+	MetaJSON   string `json:"metaJSON,omitempty"`
+	// MirrorDir is the folder holding content.json + meta.json (diagnostics).
+	MirrorDir string `json:"mirrorDir,omitempty"`
 	// Root is the absolute workspace root the file was resolved against.
 	// Tags the document with its opening folder (tasks.md 1.1 option b)
 	// so the UI can detect stale tabs after a folder switch.

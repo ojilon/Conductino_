@@ -40,6 +40,11 @@ const (
 	ToolSearchWorkspace    = tools.ToolSearchWorkspace
 	ToolRunWorkflow        = tools.ToolRunWorkflow
 	ToolPublishSummary     = tools.ToolPublishSummary
+	// Mirror-pipeline tools (backend/tools/mirror_tools.go).
+	ToolGetSummaryTarget = tools.ToolGetSummaryTarget
+	ToolReadMirror       = tools.ToolReadMirror
+	ToolReadSkill        = tools.ToolReadSkill
+	ToolShell            = tools.ToolShell
 )
 
 // ToolCatalog returns the system description of available tools.

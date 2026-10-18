@@ -12,6 +12,7 @@ import (
 	// The module is `Conductino` (go.mod), so the correct local path is
 	// `Conductino/backend/models`. `models` supplies FileTreeNode, the
 	// JSON shape returned to the frontend over the Wails boundary.
+	"Conductino/backend/extract"
 	"Conductino/backend/models"
 )
 
@@ -194,4 +195,119 @@ func walkDir(root, absPath string) (*models.FileTreeNode, error) {
 		}
 	}
 	return node, nil
+}
+
+// ---------------------------------------------------------------------------
+// File operations for the library UI (create / rename)
+//
+// Everything goes through Resolve first: the same containment check that
+// reads use, so the UI can never create or rename files outside the open
+// research folder. Paths returned are workspace-relative slash tokens (the
+// same shape FileTreeNode.Path uses) so the frontend can refresh + locate.
+// ---------------------------------------------------------------------------
+
+// CreateFile makes a new empty file inside the workspace.
+//
+//	.docx → a VALID empty Word package (via extract.WriteDOCX), so the file
+//	        opens immediately in the reader and in Word,
+//	.txt/.md/.markdown → an empty text file,
+//	anything else → an honest error (we refuse to fake unknown formats).
+//
+// relPath is the workspace-relative token, e.g. "notes/Summary.docx".
+func (f *Filesystem) CreateFile(relPath string) (string, error) {
+	rel := normalizeRelToken(relPath)
+	if rel == "" {
+		return "", fmt.Errorf("give the new file a name")
+	}
+	abs, err := f.Resolve(rel)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err == nil {
+		return "", fmt.Errorf("%s already exists", rel)
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	switch strings.ToLower(filepath.Ext(abs)) {
+	case ".docx":
+		// One blank paragraph — Word rejects a truly empty document.xml body.
+		blank := []extract.DocxBlock{{
+			ID: "empty", Type: "paragraph",
+			Segments: []extract.DocxSegment{{Text: ""}},
+		}}
+		if err := extract.WriteDOCX(abs, blank); err != nil {
+			return "", err
+		}
+	case ".txt", ".md", ".markdown":
+		if err := os.WriteFile(abs, []byte(""), 0o644); err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("cannot create %q — supported new files: .docx, .txt, .md", filepath.Ext(abs))
+	}
+	return rel, nil
+}
+
+// CreateFolder makes a new folder inside the workspace (e.g. "skills-notes").
+func (f *Filesystem) CreateFolder(relPath string) (string, error) {
+	rel := normalizeRelToken(relPath)
+	if rel == "" {
+		return "", fmt.Errorf("give the new folder a name")
+	}
+	abs, err := f.Resolve(rel)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err == nil {
+		return "", fmt.Errorf("%s already exists", rel)
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", err
+	}
+	return rel, nil
+}
+
+// Rename renames a file or folder IN PLACE (same parent folder, new base
+// name). newName is just the name — "Summary v2.docx", never a path — so a
+// rename can never move things out of their folder.
+func (f *Filesystem) Rename(relPath, newName string) (string, error) {
+	rel := normalizeRelToken(relPath)
+	newName = strings.TrimSpace(newName)
+	if rel == "" || newName == "" {
+		return "", fmt.Errorf("rename needs the old path and a new name")
+	}
+	if strings.ContainsAny(newName, `/\`) {
+		return "", fmt.Errorf("new name must not contain path separators")
+	}
+	oldAbs, err := f.Resolve(rel)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(oldAbs); err != nil {
+		return "", fmt.Errorf("%s does not exist", rel)
+	}
+	newAbs := filepath.Join(filepath.Dir(oldAbs), newName)
+	// Containment check on the destination too (defense in depth).
+	newRel, err := filepath.Rel(f.Root(), newAbs)
+	if err != nil || strings.HasPrefix(newRel, "..") {
+		return "", fmt.Errorf("rename would leave the workspace")
+	}
+	if _, err := os.Stat(newAbs); err == nil {
+		return "", fmt.Errorf("%s already exists", newName)
+	}
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(newRel), nil
+}
+
+// normalizeRelToken cleans a frontend path token: slash-normalized, no
+// leading "./" or "/", no trailing spaces. Resolve still does the real
+// containment check — this is just tidying.
+func normalizeRelToken(relPath string) string {
+	rel := strings.TrimSpace(filepath.ToSlash(relPath))
+	rel = strings.TrimPrefix(rel, "./")
+	rel = strings.TrimPrefix(rel, "/")
+	return strings.TrimSuffix(rel, "/")
 }

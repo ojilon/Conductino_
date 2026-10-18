@@ -16,6 +16,7 @@
  */
 
 import type { ChatMessage, ChatThread, FileTreeNode } from "../types/domain";
+import type { MirrorContent, MirrorMeta, MirrorWriteReport, SummaryTarget } from "../types/mirror";
 
 /**
  * Wails-bound Go shell (frontend/app.go, generated at runtime — NOT a build
@@ -56,6 +57,35 @@ interface WailsApp {
   LoadThread(id: string): Promise<ChatThreadDTO | null>;
   ListThreads(workspaceId: string): Promise<ChatThreadDTO[]>;
   ListMessages(threadId: string): Promise<ChatMessageDTO[]>;
+
+  /* ---------------- Mirror pipeline + file ops (backend/docpipe) -------- */
+  /** SAVE BRIDGE: edited mirror content JSON → verified write-back to the
+   *  source file. Resolves to the WriteReport as a JSON string. */
+  SaveDocumentMirror(path: string, contentJSON: string): Promise<string>;
+  /** Create an empty file in the workspace (.docx gets a valid empty Word
+   *  package; .txt/.md an empty text file). Returns the relative path. */
+  CreateFile(path: string): Promise<string>;
+  /** Create a folder in the workspace. Returns the relative path. */
+  CreateFolder(path: string): Promise<string>;
+  /** Rename a file/folder in place (new base name only). */
+  RenameFile(path: string, newName: string): Promise<string>;
+  /** Mark a .docx as THE workspace summary target (all summaries go there). */
+  SetSummaryTarget(path: string): Promise<void>;
+  /** The marked summary target as JSON ("" when none). */
+  GetSummaryTarget(): Promise<string>;
+  /** The AI skills folder as a file tree (same shape as the library). */
+  ListSkillsTree(): Promise<FileTreeNode | null>;
+  /** Read one skills-folder instruction file. */
+  ReadSkillFile(path: string): Promise<string>;
+  /** Save one skills-folder instruction file. */
+  WriteSkillFile(path: string, content: string): Promise<void>;
+  /** Create a file (isDir=false) or folder (isDir=true) inside skills/. */
+  CreateSkillEntry(path: string, isDir: boolean): Promise<void>;
+  /** Run one basic command in the sandboxed shell (cwd = open folder). */
+  RunShell(command: string): Promise<string>;
+  /** Push LIVE editor state into the mirror's content.json (no source
+   *  write) so the AI's read_mirror view matches what the user sees. */
+  UpdateMirrorContent(path: string, contentJSON: string): Promise<void>;
 }
 
 /** Wire shapes of Go persistence records (models/storage.go). */
@@ -113,6 +143,13 @@ export interface OpenedFile {
   /** Empty on success; set on classified failure (tasks.md 1.2). */
   reason?: OpenFailureReason;
   detail?: string;
+  /* ---- Mirror pair (backend/docpipe): compact JSON strings ---- */
+  /** content.json — the format-free document content (MirrorContent). */
+  mirrorJSON?: string;
+  /** meta.json — the rendering guide / verification data (MirrorMeta). */
+  metaJSON?: string;
+  /** Folder on disk holding content.json + meta.json (diagnostics). */
+  mirrorDir?: string;
 }
 
 export interface FilesystemService {
@@ -506,4 +543,166 @@ export async function loadWorkspaceThreads(workspaceId: string): Promise<ChatThr
   } catch {
     return [];
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Mirror pipeline + library file ops + skills folder + AI shell       */
+/*                                                                     */
+/* Every helper is bridge-first: without the desktop shell (browser     */
+/* mode) they resolve to honest empty values, never throw.             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * SAVE BRIDGE: send the edited mirror content back to Go. The backend
+ * verifies which blocks changed (hashes from meta.json) and writes the
+ * source file (.docx/.txt/.md). Null without the desktop bridge.
+ */
+export async function saveDocumentMirror(
+  path: string,
+  content: MirrorContent,
+): Promise<MirrorWriteReport | null> {
+  const app = wailsApp();
+  if (!app || typeof app.SaveDocumentMirror !== "function") return null;
+  const raw = await app.SaveDocumentMirror(path, JSON.stringify(content));
+  try {
+    return JSON.parse(raw) as MirrorWriteReport;
+  } catch {
+    return { written: true, changed: [], added: [], removed: [], unchangedCount: 0 };
+  }
+}
+
+/**
+ * LIVE MIRROR PUSH: update content.json from the editor without saving the
+ * source file. Fire-and-forget (debounced by the caller); silently no-ops
+ * without the desktop bridge. The AI's read_mirror reads these files, so
+ * this is what lets it "watch" the user edit.
+ */
+export async function updateMirrorContent(path: string, content: MirrorContent): Promise<void> {
+  const app = wailsApp();
+  if (!app || typeof app.UpdateMirrorContent !== "function") return;
+  try {
+    await app.UpdateMirrorContent(path, JSON.stringify(content));
+  } catch {
+    // Best-effort: the mirror catch-up happens on the next open anyway.
+  }
+}
+
+/** Create an empty workspace file (.docx/.txt/.md). Null without bridge. */
+export async function createWorkspaceFile(path: string): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.CreateFile !== "function") return null;
+  return app.CreateFile(path);
+}
+
+/** Create a workspace folder. Null without bridge. */
+export async function createWorkspaceFolder(path: string): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.CreateFolder !== "function") return null;
+  return app.CreateFolder(path);
+}
+
+/** Rename a workspace file/folder in place. Null without bridge. */
+export async function renameWorkspaceFile(path: string, newName: string): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.RenameFile !== "function") return null;
+  return app.RenameFile(path, newName);
+}
+
+/** Mark a .docx as the workspace summary target. False without bridge. */
+export async function setSummaryTargetFile(path: string): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.SetSummaryTarget !== "function") return false;
+  try {
+    await app.SetSummaryTarget(path);
+    return true;
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+
+/** The marked summary target for the open workspace (null = none). */
+export async function getSummaryTargetFile(): Promise<SummaryTarget | null> {
+  const app = wailsApp();
+  if (!app || typeof app.GetSummaryTarget !== "function") return null;
+  try {
+    const raw = await app.GetSummaryTarget();
+    if (!raw) return null;
+    return JSON.parse(raw) as SummaryTarget;
+  } catch {
+    return null;
+  }
+}
+
+/** The AI skills folder as a file tree (null without bridge). */
+export async function listSkillsTree(): Promise<FileTreeNode | null> {
+  const app = wailsApp();
+  if (!app || typeof app.ListSkillsTree !== "function") return null;
+  try {
+    return (await app.ListSkillsTree()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read one skills-folder file (null without bridge / on error). */
+export async function readSkillFile(path: string): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.ReadSkillFile !== "function") return null;
+  try {
+    return await app.ReadSkillFile(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Save one skills-folder file. False without bridge. */
+export async function writeSkillFile(path: string, content: string): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.WriteSkillFile !== "function") return false;
+  try {
+    await app.WriteSkillFile(path, content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Create a file/folder inside skills/. False without bridge. */
+export async function createSkillEntry(path: string, isDir: boolean): Promise<boolean> {
+  const app = wailsApp();
+  if (!app || typeof app.CreateSkillEntry !== "function") return false;
+  try {
+    await app.CreateSkillEntry(path, isDir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Run one command in the sandboxed AI shell (null without bridge). */
+export async function runShellCommand(command: string): Promise<string | null> {
+  const app = wailsApp();
+  if (!app || typeof app.RunShell !== "function") return null;
+  try {
+    return await app.RunShell(command);
+  } catch (e) {
+    return `[shell error] ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/** Parse the mirror pair attached to an OpenedFile (null-safe). */
+export function parseMirrorPair(opened: OpenedFile): { content: MirrorContent | null; meta: MirrorMeta | null } {
+  let content: MirrorContent | null = null;
+  let meta: MirrorMeta | null = null;
+  try {
+    if (opened.mirrorJSON) content = JSON.parse(opened.mirrorJSON) as MirrorContent;
+  } catch {
+    content = null;
+  }
+  try {
+    if (opened.metaJSON) meta = JSON.parse(opened.metaJSON) as MirrorMeta;
+  } catch {
+    meta = null;
+  }
+  return { content, meta };
 }

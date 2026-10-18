@@ -46,14 +46,14 @@ func TestToolsUnsupported(t *testing.T) {
 }
 func TestToolSchemasMirrorRegistry(t *testing.T) {
 	schemas := oaiToolSchemas()
-	if len(schemas) != 7 {
-		t.Fatalf("want 7 schemas, got %d", len(schemas))
+	if len(schemas) != 11 {
+		t.Fatalf("want 11 schemas, got %d", len(schemas))
 	}
 	seen := map[string]bool{}
 	for _, s := range schemas {
 		seen[s.Function.Name] = true
 	}
-	for _, want := range []string{ToolListWorkspace, ToolReadSource, ToolReadSummary, ToolProposeSummaryEdit, ToolSearchWorkspace, ToolRunWorkflow, ToolPublishSummary} {
+	for _, want := range []string{ToolListWorkspace, ToolReadSource, ToolReadSummary, ToolProposeSummaryEdit, ToolSearchWorkspace, ToolRunWorkflow, ToolPublishSummary, ToolGetSummaryTarget, ToolReadMirror, ToolReadSkill, ToolShell} {
 		if !seen[want] {
 			t.Fatalf("schema missing for %s", want)
 		}

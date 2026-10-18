@@ -13,6 +13,10 @@
 
 export type ID = string;
 
+// Mirror-file types (meta.json guide + highlight colors) — see types/mirror.ts.
+// Type-only import: domain.ts stays a pure types module.
+import type { HighlightColor, MirrorMeta } from "./mirror";
+
 export type AppMode = "browser" | "reader";
 
 /* ------------------------------------------------------------------ */
@@ -332,6 +336,15 @@ export interface DocumentMetadata {
   pageCount?: number;
   path?: string;
   /**
+   * Mirror metadata (meta.json from backend/docpipe): how the content sat
+   * in the source file — page size, fonts, margins, per-page block map.
+   * The canvas uses it to mirror the source LOOK its own way. Undefined
+   * for mock/legacy documents (the canvas falls back to safe defaults).
+   */
+  mirror?: MirrorMeta;
+  /** True when the mirror says the format is editable (docx/txt/md). */
+  editable?: boolean;
+  /**
    * Absolute workspace root the file was opened from (tasks.md 1.1 option b).
    * Compared against the current library root before any resolve/reveal/
    * locate — a mismatch means "file belongs to another folder", never a
@@ -354,6 +367,14 @@ export interface Highlight {
   range?: { start: number; end: number };
   note?: string;
   createdAt: number;
+  /**
+   * Highlighter color (see types/mirror.ts). Yellow is the convention for
+   * AI changes awaiting review; "Save permanently" in the right-click menu
+   * keeps the highlight and clears `pending`.
+   */
+  color?: HighlightColor;
+  /** True while a highlight is provisional (AI-made, not yet kept). */
+  pending?: boolean;
 }
 
 export interface Document {

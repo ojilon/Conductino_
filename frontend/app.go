@@ -232,3 +232,74 @@ func (a *App) BuildContextPack(blocksJSON, title, blockID, selText string, range
 func (a *App) MatchSkills(operation, intent string) (string, error) {
 	return a.backend.MatchSkills(operation, intent)
 }
+
+// ===========================================================================
+// Mirror pipeline + library file ops + skills folder + AI shell
+// (thin Wails wrappers over backend/main.go — see the MIRROR PIPELINE
+// section there for what each call does and why.)
+// ===========================================================================
+
+// SaveDocumentMirror is the save bridge: edited mirror content JSON is
+// verified (changed blocks only) and written back into the source file.
+// Returns the WriteReport as JSON.
+func (a *App) SaveDocumentMirror(path string, contentJSON string) (string, error) {
+	return a.backend.SaveDocumentMirror(path, contentJSON)
+}
+
+// CreateFile makes a new empty file in the workspace (.docx/.txt/.md).
+func (a *App) CreateFile(path string) (string, error) {
+	return a.backend.CreateFile(path)
+}
+
+// CreateFolder makes a new folder in the workspace.
+func (a *App) CreateFolder(path string) (string, error) {
+	return a.backend.CreateFolder(path)
+}
+
+// RenameFile renames a file/folder in place (new base name only).
+func (a *App) RenameFile(path string, newName string) (string, error) {
+	return a.backend.RenameFile(path, newName)
+}
+
+// SetSummaryTarget marks a .docx as the workspace summary target.
+func (a *App) SetSummaryTarget(path string) error {
+	return a.backend.SetSummaryTarget(path)
+}
+
+// GetSummaryTarget returns the marked summary target as JSON ("" = none).
+func (a *App) GetSummaryTarget() string {
+	return a.backend.GetSummaryTarget()
+}
+
+// ListSkillsTree returns the AI skills folder as a file tree.
+func (a *App) ListSkillsTree() (*models.FileTreeNode, error) {
+	return a.backend.ListSkillsTree()
+}
+
+// ReadSkillFile reads one skills-folder instruction file.
+func (a *App) ReadSkillFile(path string) (string, error) {
+	return a.backend.ReadSkillFile(path)
+}
+
+// WriteSkillFile saves one skills-folder instruction file.
+func (a *App) WriteSkillFile(path string, content string) error {
+	return a.backend.WriteSkillFile(path, content)
+}
+
+// CreateSkillEntry creates a file (isDir=false) or folder (isDir=true) in
+// the skills folder.
+func (a *App) CreateSkillEntry(path string, isDir bool) error {
+	return a.backend.CreateSkillEntry(path, isDir)
+}
+
+// RunShell runs one basic command in the sandboxed shell (cwd = the open
+// research folder, 10s timeout, capped output).
+func (a *App) RunShell(command string) (string, error) {
+	return a.backend.RunShell(command)
+}
+
+// UpdateMirrorContent pushes live editor state into the mirror's
+// content.json (no source write) so the AI sees edits as they happen.
+func (a *App) UpdateMirrorContent(path string, contentJSON string) error {
+	return a.backend.UpdateMirrorContent(path, contentJSON)
+}

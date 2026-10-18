@@ -4,6 +4,7 @@ package backend
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,10 +12,13 @@ import (
 	"time"
 
 	"Conductino/backend/apppaths"
+	"Conductino/backend/docpipe"
 	"Conductino/backend/extract"
 	"Conductino/backend/mirror"
 	"Conductino/backend/models"
 	"Conductino/backend/services"
+	"Conductino/backend/skills"
+	"Conductino/backend/tools"
 )
 
 type AIEventSink = services.AIEventSink
@@ -121,10 +125,14 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 	if info, serr := os.Stat(abs); serr == nil && !info.IsDir() {
 		statMtime, statSize = info.ModTime().UnixMilli(), info.Size()
 		if hit, cerr := b.storage.GetCachedExtract(cacheKey, statMtime, statSize); cerr == nil && hit != nil {
-			return &models.OpenedDocument{
+			cached := models.OpenedDocument{
 				Title: hit.Title, BlocksJSON: hit.BlocksJSON,
 				PageCount: hit.PageCount, Kind: hit.Kind, Root: root,
-			}, nil
+			}
+			// Cache hits still refresh the mirror pair (cheap, and it keeps
+			// content.json/meta.json on disk for the AI + save bridge).
+			b.attachMirror(root, path, abs, &cached)
+			return &cached, nil
 		}
 	}
 	opened, err := b.docs.OpenFile(abs, path)
@@ -138,6 +146,11 @@ func (b *Backend) OpenFile(_ context.Context, path string) (*models.OpenedDocume
 		return nil, err
 	}
 	opened.Root = root
+	// MIRROR STEP (backend/docpipe): every successful open also produces the
+	// content.json + meta.json pair — the format-free mirror the frontend
+	// canvas renders and the AI reads. Best-effort: if mirroring fails the
+	// blocks JSON above still opens the document exactly as before.
+	b.attachMirror(root, path, abs, &opened)
 	if statMtime >= 0 {
 		// Best-effort store; extraction already succeeded, so a cache
 		// failure must never fail the open.
@@ -337,4 +350,174 @@ func (b *Backend) IsUnderRoot(path string) bool {
 		return false
 	}
 	return !strings.HasPrefix(rel, "..")
+}
+
+// ===========================================================================
+// The MIRROR PIPELINE bridge methods (backend/docpipe)
+//
+// OpenFile (above) already attaches the mirror pair to every opened
+// document. The methods below cover the rest of the lifecycle:
+//
+//   SaveDocumentMirror — the SAVE BRIDGE: edited canvas JSON → verified
+//                        write-back into the source .docx/.txt/.md
+//   CreateFile / CreateFolder / RenameFile — library file operations
+//   SetSummaryTarget / GetSummaryTarget   — the workspace summary document
+//   ListSkillsTree / ReadSkillFile / WriteSkillFile / CreateSkillEntry
+//                                          — the AI skills folder as files
+//   RunShell                               — the basic sandboxed AI shell
+// ===========================================================================
+
+// attachMirror builds the mirror pair (content.json + meta.json) for one
+// opened document, saves it under the app-data cache, and attaches the
+// compact JSON strings to the wire value. Best-effort by design: any
+// failure leaves BlocksJSON untouched and the document opens as before.
+func (b *Backend) attachMirror(root, relPath, absPath string, opened *models.OpenedDocument) {
+	if opened == nil || opened.BlocksJSON == "" || opened.Reason != "" {
+		return
+	}
+	kind := opened.Kind
+	if kind == "" {
+		// Fall back to the extension so odd arms still mirror.
+		switch strings.ToLower(filepath.Ext(relPath)) {
+		case ".pdf":
+			kind = "pdf"
+		case ".docx":
+			kind = "docx"
+		default:
+			kind = "text"
+		}
+	}
+	content, meta, err := docpipe.Build(kind, opened.Title, relPath, absPath, opened.PageCount, opened.BlocksJSON)
+	if err != nil {
+		return
+	}
+	dir, _ := docpipe.SaveFor(root, relPath, content, meta)
+	opened.MirrorDir = dir
+	if cj, jerr := json.Marshal(content); jerr == nil {
+		opened.MirrorJSON = string(cj)
+	}
+	if mj, jerr := json.Marshal(meta); jerr == nil {
+		opened.MetaJSON = string(mj)
+	}
+}
+
+// SaveDocumentMirror is the SAVE BRIDGE: the frontend sends the edited
+// mirror content ({version,kind,title,blocks}) and docpipe.WriteBack
+// verifies which blocks changed (per-block hash + source stamp from
+// meta.json) before writing the source file back. Returns the WriteReport
+// as JSON: {written, changed[], added[], removed[], unchangedCount, …}.
+func (b *Backend) SaveDocumentMirror(path, contentJSON string) (string, error) {
+	abs, err := b.fs.Resolve(path)
+	if err != nil {
+		return "", err
+	}
+	report, err := docpipe.WriteBack(b.fs.Root(), path, abs, contentJSON)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// CreateFile makes a new empty file in the workspace (.docx gets a valid
+// empty Word package; .txt/.md an empty text file). Returns the relative
+// path token of the created file.
+func (b *Backend) CreateFile(relPath string) (string, error) {
+	return b.fs.CreateFile(relPath)
+}
+
+// CreateFolder makes a new folder in the workspace.
+func (b *Backend) CreateFolder(relPath string) (string, error) {
+	return b.fs.CreateFolder(relPath)
+}
+
+// RenameFile renames a file/folder in place (new base name only).
+func (b *Backend) RenameFile(relPath, newName string) (string, error) {
+	return b.fs.Rename(relPath, newName)
+}
+
+// SetSummaryTarget marks a workspace .docx as THE document all summaries
+// are siphoned into (library right-click → "Make this the target summary
+// document"). The marker lives in app-data (docpipe/target.go) so the Go
+// tools and the AI can find it without any extra wiring.
+func (b *Backend) SetSummaryTarget(relPath string) error {
+	abs, err := b.fs.Resolve(relPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("file not found in workspace: %s", relPath)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("the summary target must be a file, not a folder")
+	}
+	if !strings.EqualFold(filepath.Ext(abs), ".docx") {
+		return fmt.Errorf("the summary target must be a .docx file (so the AI can write into it)")
+	}
+	base := filepath.Base(abs)
+	return docpipe.SaveTarget(docpipe.SummaryTarget{
+		Root:    b.fs.Root(),
+		RelPath: filepath.ToSlash(relPath),
+		Title:   strings.TrimSuffix(base, filepath.Ext(base)),
+	})
+}
+
+// GetSummaryTarget returns the marked summary target as JSON
+// ({"root":…,"relPath":…,"title":…}) or "" when none is marked for the
+// currently open workspace folder.
+func (b *Backend) GetSummaryTarget() string {
+	target, ok := docpipe.LoadTarget()
+	if !ok || target.Root != b.fs.Root() {
+		return ""
+	}
+	raw, err := json.Marshal(target)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// ListSkillsTree returns the AI skills folder (backend/skills in dev,
+// app-data skills installed) as the same tree shape the library uses, so
+// the frontend renders it with familiar components.
+func (b *Backend) ListSkillsTree() (*models.FileTreeNode, error) {
+	return skills.ListTree()
+}
+
+// ReadSkillFile returns one instruction file's text (path relative to the
+// skills folder, e.g. "my_instructions/reading-rules.md").
+func (b *Backend) ReadSkillFile(rel string) (string, error) {
+	return skills.ReadFile(rel)
+}
+
+// WriteSkillFile saves one instruction file (used by the Skills panel).
+func (b *Backend) WriteSkillFile(rel, content string) error {
+	return skills.WriteFile(rel, content)
+}
+
+// CreateSkillEntry creates a new file (isDir=false) or folder (isDir=true)
+// inside the skills folder — e.g. ("my_instructions", true) then
+// ("my_instructions/rules.md", false).
+func (b *Backend) CreateSkillEntry(rel string, isDir bool) error {
+	return skills.CreateEntry(rel, isDir)
+}
+
+// RunShell executes one basic command in the sandboxed AI shell
+// (backend/tools/shell.go): cwd = the open research folder, 10s timeout,
+// capped output, deny-list. Exposed to the UI for transparency/debugging
+// and used by the AI through the "shell" tool.
+func (b *Backend) RunShell(command string) (string, error) {
+	return tools.RunShell(b.fs.Root(), command)
+}
+
+// UpdateMirrorContent pushes the LIVE editor state into content.json (no
+// source-file write). Called debounced while the user types so the mirror —
+// and therefore the AI's read_mirror view — always matches what the user
+// sees. meta.json (the source guide) is left alone until a real save.
+func (b *Backend) UpdateMirrorContent(path, contentJSON string) error {
+	return docpipe.UpdateContent(b.fs.Root(), path, contentJSON)
 }

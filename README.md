@@ -5,6 +5,17 @@ Two application modes — **Browser** (research sessions with page tabs + AI Bro
 (document subtabs, PDF canvas + text views, AI chat with `@doc` targeting, editable research
 summary with reviewed AI changes).
 
+> **Document rendering = the MIRROR PIPELINE** (`backend/docpipe` +
+> `frontend/src/features/reader/MirrorCanvas.tsx`): every source file is
+> mirrored into `content.json` (format-free text the custom canvas edits) +
+> `meta.json` (the guide: page sizes, fonts, page map, per-block hashes).
+> Saving verifies only the changed blocks and writes the source file back
+> (.docx/.txt/.md; PDFs stay read-only + highlightable). The AI reads the
+> same mirror (`read_mirror`), finds the workspace summary target
+> (`get_summary_target`), follows user instructions from `skills/`
+> (`read_skill`, browsable in the Skills panel), and has a basic sandboxed
+> `shell`. Full walkthrough: **[`docs/mirror-pipeline.md`](docs/mirror-pipeline.md)**.
+
 > **Stability note:** this project is mid-migration and parts are unstable by
 > design. The folder-open / library / extraction pipe is wired with typed
 > failure reasons (no mock fallback); the chosen folder persists across

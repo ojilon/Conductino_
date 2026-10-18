@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"Conductino/backend/docpipe"
 	"Conductino/backend/extract"
 	"Conductino/backend/mirror"
 	"Conductino/backend/models"
@@ -23,6 +24,11 @@ const (
 	ToolSearchWorkspace     = "search_in_workspace"
 	ToolRunWorkflow         = "run_workflow"
 	ToolPublishSummary      = "publish_summary"
+	// Mirror-pipeline tools (see mirror_tools.go + backend/docpipe/doc.go):
+	ToolGetSummaryTarget = "get_summary_target" // which .docx receives summaries
+	ToolReadMirror       = "read_mirror"        // document as the user sees it (pages + metadata)
+	ToolReadSkill        = "read_skill"         // one instruction file from skills/
+	ToolShell            = "shell"              // basic sandboxed command in the open folder
 )
 
 // Allowed source extensions for read_source (lowercase, no dot).
@@ -174,7 +180,9 @@ func ToolCatalog() string {
 You may call at most two tools before answering. Use ONLY this XML form on its own line:
 <tool name="list_workspace"/>
 <tool name="read_source" path="relative/path.txt"/>
+<tool name="read_mirror" path="relative/path.docx"/>
 <tool name="read_summary"/>
+<tool name="get_summary_target"/>
 <tool name="propose_summary_edit" op="insert" text="1-2 factual sentences"/>
 <tool name="propose_summary_edit" op="modify" target="block id or quoted span" text="replacement text"/>
 <tool name="propose_summary_edit" op="delete" target="block id or quoted span"/>
@@ -182,8 +190,21 @@ You may call at most two tools before answering. Use ONLY this XML form on its o
 <tool name="run_workflow" workflow="summarize-folder"/>
 <tool name="run_workflow" workflow="add-to-summary" source="relative/path.docx" topic="what to extract"/>
 <tool name="publish_summary"/>
+<tool name="read_skill" path="my_instructions/reading-rules.md"/>
+<tool name="shell" command="ls -la"/>
 
 Rules:
+- read_mirror shows a document the way the user SEES it in the app: page by
+  page, with the metadata header (kind, page size, font, editable). Prefer it
+  over read_source when the user asks about pages or "what am I looking at".
+- get_summary_target names the .docx the user marked to receive ALL summaries
+  in this workspace. Before summarizing, call it — never guess a target file.
+  propose_summary_edit + publish_summary write into it.
+- When the user mentions a path like @skills/my_instructions/foo.md, read it
+  with read_skill and follow those instructions (they are user-authored).
+- shell runs ONE basic command (10s timeout) in the open research folder for
+  simple checks (list, count, grep). It is sandboxed and read-minded — never
+  use it to modify or delete files; the document tools do that safely.
 - Paths are relative to the open research folder. Never use absolute paths or "..".
 - read_source reads .txt/.md/.pdf/.docx. If the exact name is slightly off
   (missing extension, typo), you get a did-you-mean list — retry with it.
@@ -267,6 +288,14 @@ func (h *ToolHost) Dispatch(name string, args map[string]string) ToolResult {
 		return h.runWorkflow(args)
 	case ToolPublishSummary:
 		return h.publishSummary()
+	case ToolGetSummaryTarget:
+		return h.getSummaryTarget()
+	case ToolReadMirror:
+		return h.readMirror(args["path"])
+	case ToolReadSkill:
+		return h.readSkill(args["path"])
+	case ToolShell:
+		return h.shell(args["command"])
 	default:
 		return ToolResult{Name: name, OK: false, Content: fmt.Sprintf("unknown tool %q", name)}
 	}
@@ -563,43 +592,50 @@ func (h *ToolHost) PublishedDocs() []PublishedDoc {
 }
 
 // CanPublish reports whether an automatic write-through has everything it
-// needs (mapped summary + file path + mirror + filesystem). The chat loop
-// uses it for the single-path guarantee: proposed-but-unpublished turns
-// publish themselves instead of stranding card-less proposals.
+// needs. Two paths satisfy it:
+//
+//	A) the mapped in-app summary (Mirror + PrimarySummaryID + SummaryPath), or
+//	B) the workspace summary TARGET file (marked in the library) with at
+//	   least one proposal this turn to siphon into it.
+//
+// The chat loop uses it for the single-path guarantee: proposed-but-
+// unpublished turns publish themselves instead of stranding card-less
+// proposals.
 func (h *ToolHost) CanPublish() bool {
-	if h == nil || h.Mirror == nil || h.FS == nil {
+	if h == nil || h.FS == nil {
 		return false
 	}
-	if strings.TrimSpace(h.PrimarySummaryID) == "" {
-		return false
+	// Path A: mapped summary with a mirror working copy.
+	if h.Mirror != nil && strings.TrimSpace(h.PrimarySummaryID) != "" {
+		rel := strings.TrimSpace(h.SummaryPath)
+		if rel != "" && !filepath.IsAbs(rel) && !strings.Contains(rel, "..") {
+			return true
+		}
 	}
-	rel := strings.TrimSpace(h.SummaryPath)
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
-		return false
+	// Path B: the user-marked summary target file for THIS workspace.
+	if target, ok := docpipe.LoadTarget(); ok && target.Root == h.FS.Root() && len(h.Proposals()) > 0 {
+		return true
 	}
-	return true
+	return false
 }
 
-// publishSummary writes the mirror working copy through to the mapped
-// summary .docx (plan 11 §3: summaries are openly editable by default;
-// sources stay read-only). The ONLY writable path is SummaryPath from the
-// frontend request — Resolve-jailed like every other path. Records the
-// unpublished mirror ops as in-file diffs for the UI.
+// publishSummary writes proposed edits through to a summary .docx.
+//
+// Path A (original): the mapped in-app summary — the mirror working copy is
+// written to SummaryPath (Resolve-jailed like every other path), and the
+// unpublished mirror ops become in-file diffs for the UI.
+//
+// Path B (summary target siphon): when no summary document is mapped, the
+// workspace SUMMARY TARGET file (right-click → "Make this the target summary
+// document") receives this turn's proposals directly. That is how "all
+// summaries are siphoned to that document" works even when it is not open.
 func (h *ToolHost) publishSummary() ToolResult {
 	fail := func(msg string) ToolResult {
 		return ToolResult{Name: ToolPublishSummary, OK: false, Content: msg}
 	}
-	if h.Mirror == nil {
-		return fail("mirrors unavailable in this build")
-	}
-	if h.PrimarySummaryID == "" {
-		return fail("no summary mapped — open the target document and choose “Make summary” first")
-	}
-	if strings.TrimSpace(h.SummaryPath) == "" {
-		return fail("mapped summary has no file path — save it as a .docx under the workspace first")
-	}
-	if h.FS == nil {
-		return fail("filesystem not available")
+	if h.Mirror == nil || h.PrimarySummaryID == "" || strings.TrimSpace(h.SummaryPath) == "" || h.FS == nil {
+		// Path A unavailable — try the user-marked summary target file.
+		return h.publishToTarget(fail)
 	}
 	rel := strings.TrimSpace(h.SummaryPath)
 	if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
@@ -638,6 +674,122 @@ func (h *ToolHost) publishSummary() ToolResult {
 		fmt.Fprintf(&b, "\n- %s %s %.80s", d.Op, d.Target, strings.TrimSpace(d.Text))
 	}
 	return ToolResult{Name: ToolPublishSummary, OK: true, Content: b.String()}
+}
+
+// publishToTarget is Path B of publish_summary: siphon this turn's proposals
+// into the workspace summary TARGET file (docpipe.SummaryTarget). The file is
+// read fresh from disk, the proposals are applied to its blocks, and the
+// .docx is rewritten — then the UI gets the same PublishedDoc/Diffs payload
+// as Path A, so yellow in-file review works identically when it is open.
+func (h *ToolHost) publishToTarget(fail func(string) ToolResult) ToolResult {
+	if h.FS == nil || h.Docs == nil {
+		return fail("no summary mapped and no workspace available — open the target document and choose “Make summary”, or mark a summary target in the library")
+	}
+	target, ok := docpipe.LoadTarget()
+	if !ok || target.Root != h.FS.Root() {
+		return fail("no summary mapped, and no summary target is marked for this workspace — ask the user to right-click a .docx in the library and choose “Make this the target summary document”")
+	}
+	proposals := h.Proposals()
+	if len(proposals) == 0 {
+		return fail("nothing proposed yet — call propose_summary_edit first, then publish_summary")
+	}
+	abs, err := h.FS.Resolve(target.RelPath)
+	if err != nil {
+		return fail("summary target is outside the workspace: " + target.RelPath)
+	}
+	opened, err := h.Docs.OpenFile(abs, target.RelPath)
+	if err != nil {
+		return fail("could not read the summary target: " + err.Error())
+	}
+	if opened.Reason != "" {
+		return fail("could not read the summary target: " + opened.Reason + " " + opened.Detail)
+	}
+	blocks, err := extract.ParseBlocksJSON(opened.BlocksJSON)
+	if err != nil {
+		return fail("could not parse the summary target: " + err.Error())
+	}
+	blocks, applied := applyProposalsToBlocks(blocks, proposals)
+	wire, err := extract.BlocksToJSON(blocks)
+	if err != nil {
+		return fail("could not encode blocks: " + err.Error())
+	}
+	if _, err := extract.WriteSummaryDOCXPath(h.FS.Root(), target.RelPath, wire); err != nil {
+		return fail("could not write the summary target: " + err.Error())
+	}
+	var diffs []PublishedDiff
+	for _, p := range applied {
+		op := p.Op
+		if op == "" {
+			op = "insert"
+		}
+		diffs = append(diffs, PublishedDiff{Op: op, Target: p.Target, Text: p.NewText, OldText: p.OldText, Note: "siphoned via summary target"})
+	}
+	h.published = append(h.published, PublishedDoc{SummaryID: h.PrimarySummaryID, Path: target.RelPath, Diffs: diffs})
+	var b strings.Builder
+	fmt.Fprintf(&b, "Siphoned %d edit(s) into the summary target %q. Reload it to see the changes.", len(diffs), target.RelPath)
+	for _, d := range diffs {
+		fmt.Fprintf(&b, "\n- %s %s %.80s", d.Op, d.Target, strings.TrimSpace(d.Text))
+	}
+	return ToolResult{Name: ToolPublishSummary, OK: true, Content: b.String()}
+}
+
+// applyProposalsToBlocks applies proposals to a fresh block list:
+//   - insert: append one new paragraph block,
+//   - modify: find the first block containing OldText (or the Target span)
+//     and replace that block's text,
+//   - delete: find and remove that block.
+//
+// Unmatched modify/delete fall back to an honest insert (never lost text).
+// Returns the new block list and the proposals actually applied.
+func applyProposalsToBlocks(blocks []extract.DocxBlock, proposals []Proposal) ([]extract.DocxBlock, []Proposal) {
+	applied := make([]Proposal, 0, len(proposals))
+	fullText := func(b extract.DocxBlock) string {
+		var sb strings.Builder
+		for _, s := range b.Segments {
+			sb.WriteString(s.Text)
+		}
+		return sb.String()
+	}
+	for _, p := range proposals {
+		text := strings.TrimSpace(p.NewText)
+		op := strings.ToLower(strings.TrimSpace(p.Op))
+		if op == "" {
+			op = "insert"
+		}
+		needle := strings.TrimSpace(p.OldText)
+		if needle == "" {
+			needle = strings.TrimSpace(p.Target)
+		}
+		switch op {
+		case "modify", "delete":
+			idx := -1
+			if needle != "" {
+				for i, b := range blocks {
+					if strings.Contains(fullText(b), needle) {
+						idx = i
+						break
+					}
+				}
+			}
+			if idx >= 0 && op == "delete" {
+				blocks = append(blocks[:idx], blocks[idx+1:]...)
+				applied = append(applied, p)
+				continue
+			}
+			if idx >= 0 && text != "" {
+				blocks[idx].Segments = []extract.DocxSegment{{Text: text}}
+				applied = append(applied, p)
+				continue
+			}
+			// Not found — fall through to insert so the text is never lost.
+		}
+		if text != "" {
+			newID := fmt.Sprintf("ai-%d", len(blocks)+len(applied)+1)
+			blocks = append(blocks, extract.DocxBlock{ID: newID, Type: "paragraph", Segments: []extract.DocxSegment{{Text: text}}})
+			applied = append(applied, p)
+		}
+	}
+	return blocks, applied
 }
 
 // LastProposal returns the latest successful propose_summary_edit.

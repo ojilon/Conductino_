@@ -19,9 +19,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
 import { useApp } from "../../state/appState";
 import { openRawFile } from "../../services/backend";
-import { SelectionToolbar } from "./DocumentView";
+import { SelectionToolbar } from "./SelectionToolbar";
 import { Icon } from "../../components/icons";
 import type { Document } from "../../types/domain";
+import { HIGHLIGHT_MEANING, HIGHLIGHT_SWATCH } from "../../types/mirror";
+import { cn } from "../../utils/cn";
 import "./PdfView.css";
 
 const RENDER_SCALE = 1.5;
@@ -160,6 +162,8 @@ export default function PdfView({ doc }: { doc: Document }) {
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Highlights ledger (below the header) — collapsed by default.
+  const [showHighlights, setShowHighlights] = useState(false);
   const pagesRef = useRef(new Map<number, HTMLDivElement | null>());
 
   const relPath = doc.metadata.path;
@@ -259,8 +263,46 @@ export default function PdfView({ doc }: { doc: Document }) {
     <div className="mx-auto max-w-[760px] px-8 py-6" data-doc-area onMouseUp={onMouseUp}>
       <div className="mb-4 flex items-center justify-between border-b border-line pb-2.5 text-[12px] text-mute">
         <span className="truncate">{doc.metadata.title}</span>
-        <span className="shrink-0 pl-3">{numPages} pages · canvas + selectable text</span>
+        <span className="shrink-0 pl-3">{numPages} pages · canvas + selectable text (read-only)</span>
       </div>
+
+      {/* Highlights ledger: PDF pages are images, so saved highlight colors
+          live here (select text on a page → click a color dot in the
+          toolbar). Each entry can be removed or sent to the AI again. */}
+      {doc.highlights.length > 0 && (
+        <div className="mb-4 rounded-lg border border-line-soft bg-white/70 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setShowHighlights((v) => !v)}
+            className="flex w-full items-center gap-2 text-[11.5px] font-medium text-ink-700"
+          >
+            <Icon name="note" size={12} className="text-mute" />
+            {doc.highlights.length} highlight{doc.highlights.length === 1 ? "" : "s"} on this PDF
+            <Icon name="chevronRight" size={11} className={cn("ml-auto text-mute transition-transform", showHighlights && "rotate-90")} />
+          </button>
+          {showHighlights && (
+            <ul className="mt-2 space-y-1.5">
+              {doc.highlights.map((h) => (
+                <li key={h.id} className="flex items-start gap-2 rounded-md bg-cream-50 px-2.5 py-1.5">
+                  <span
+                    title={HIGHLIGHT_MEANING[h.color ?? "yellow"]}
+                    className={cn("mt-1 h-2.5 w-2.5 shrink-0 rounded-full", HIGHLIGHT_SWATCH[h.color ?? "yellow"])}
+                  />
+                  <span className="min-w-0 flex-1 text-[12px] leading-snug text-ink-600">{h.text.slice(0, 220)}</span>
+                  <button
+                    type="button"
+                    title="Remove highlight"
+                    className="shrink-0 rounded p-0.5 text-mute hover:bg-rose-50 hover:text-rose-600"
+                    onClick={() => dispatch({ type: "doc.highlight.remove", documentId: doc.id, highlightId: h.id })}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="space-y-5">
         {Array.from({ length: numPages }, (_, i) => (
           <PdfPage

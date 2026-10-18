@@ -16,4 +16,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  server: {
+    // Listen on every interface and accept proxied hostnames so the dev
+    // server works inside sandboxes/previews (proxied under *.e2b.app etc.).
+    // Dev-only setting — the production build is a single static file.
+    host: "0.0.0.0",
+    port: 5173,
+    allowedHosts: true,
+  },
 });

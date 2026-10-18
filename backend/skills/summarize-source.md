@@ -2,7 +2,7 @@
 skill: summarize-source
 version: 3
 when: ["user asks to summarize", "add to summary", "AI_MERGE", "AI_CHAT + propose_summary_edit"]
-tools: [run_workflow, list_workspace, read_source, read_summary, propose_summary_edit, publish_summary]
+tools: [run_workflow, list_workspace, read_source, read_mirror, get_summary_target, read_summary, propose_summary_edit, publish_summary]
 budgets: { maxToolCalls: 8, maxChars: 6000 }
 ---
 # Summarize a source into the living summary
@@ -13,7 +13,12 @@ budgets: { maxToolCalls: 8, maxChars: 6000 }
    report the queued proposals. Do NOT narrate tool calls or ask for
    confirmation first; the Review gate is the confirmation. Use the manual
    loop below only for nuanced merges (redefine/restructure across sources).
-1. Confirm the summary file exists: `list_workspace` first. If the user
+1. Find the summary target FIRST: call `get_summary_target` — it names the
+   .docx the user marked to receive ALL summaries in this workspace. If it
+   reports no target, fall back to `list_workspace` + the mapped summary;
+   if neither exists, ask the user to right-click a .docx in the library →
+   "Make this the target summary document". Never guess a target file.
+2. Confirm the summary file exists: `list_workspace` first. If the user
    names a file that is not listed, say so and stop — never invent content
    for a file you have not seen.
 2. `read_summary` before drafting anything (harmonize, never append blindly).

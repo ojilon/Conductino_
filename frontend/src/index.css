@@ -121,3 +121,25 @@ body {
 .fade-in {
   animation: lumen-fade-in 160ms ease-out;
 }
+
+/* Mirror canvas: plaintext-only editables get the same caret treatment
+   (the attribute value differs from "true", so list both). */
+[contenteditable="plaintext-only"] {
+  outline: none;
+  caret-color: var(--color-iris-600);
+}
+[contenteditable="plaintext-only"]:hover {
+  box-shadow: 0 0 0 1px var(--color-line-soft);
+}
+[contenteditable="plaintext-only"]:focus {
+  box-shadow: 0 0 0 1.5px var(--color-iris-300);
+}
+
+/* Empty editable placeholder (new/blank files on the canvas): the hint is
+   pure CSS so it can never be committed as real text. */
+[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-mute, #9aa0b5);
+  opacity: 0.75;
+  pointer-events: none;
+}

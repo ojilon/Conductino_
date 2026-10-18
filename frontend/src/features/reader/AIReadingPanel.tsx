@@ -20,6 +20,7 @@ import { Icon } from "../../components/icons";
 import { Button, EmptyState, IconBtn, Spinner } from "../../components/ui";
 import { cn } from "../../utils/cn";
 import { timeLabel } from "../../utils/helpers";
+import SkillsPanel from "./SkillsPanel";
 
 /* ------------------------------------------------------------------ */
 /* Live activity strip (shared)                                        */
@@ -269,7 +270,7 @@ function ChatFace({ doc }: { doc: Document }) {
               }
             }}
             rows={2}
-            placeholder="Ask about the document… (@title to target a doc)"
+            placeholder="Ask about the document… (@title targets a doc, @skills/path.md loads your instructions)"
             className="min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-cream-50 px-3 py-2 text-[12.5px] text-ink-800 outline-none focus:border-iris-300"
             disabled={!!runningChat}
           />
@@ -424,6 +425,8 @@ function CompanionFace({ doc }: { doc: Document }) {
 export default function AIReadingPanel({ doc }: { doc: Document }) {
   const { state, dispatch } = useApp();
   const tab: AiPanelTab = state.reader.ui.aiPanelTab ?? "chat";
+  // Skills & instructions modal (the AI's folder, browsable like files).
+  const [skillsOpen, setSkillsOpen] = useState(false);
 
   const setTab = (next: AiPanelTab) =>
     dispatch({ type: "reader.ui", patch: { aiPanelTab: next } });
@@ -453,14 +456,27 @@ export default function AIReadingPanel({ doc }: { doc: Document }) {
             Reading
           </button>
         </div>
-        <IconBtn
-          name="x"
-          title="Hide panel"
-          onClick={() => dispatch({ type: "reader.ui", patch: { aiPanelOpen: false } })}
-        />
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            title="AI skills & instructions folder (browse, edit, create custom instructions)"
+            onClick={() => setSkillsOpen(true)}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-iris-700 transition-colors hover:bg-iris-50"
+          >
+            <Icon name="sparkles" size={12} className="text-iris-600" />
+            Skills
+          </button>
+          <IconBtn
+            name="x"
+            title="Hide panel"
+            onClick={() => dispatch({ type: "reader.ui", patch: { aiPanelOpen: false } })}
+          />
+        </span>
       </div>
 
       {tab === "chat" ? <ChatFace doc={doc} /> : <CompanionFace doc={doc} />}
+
+      {skillsOpen && <SkillsPanel onClose={() => setSkillsOpen(false)} />}
     </div>
   );
 }

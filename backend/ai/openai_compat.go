@@ -185,6 +185,15 @@ func oaiToolSchemas() []oaiTool {
 			}, "workflow")),
 		fn(ToolPublishSummary, "Write the summary working copy through to the mapped .docx (summaries are openly editable; sources stay read-only). Call after proposing, then report. No args.",
 			obj(map[string]any{})),
+		// Mirror-pipeline tools (backend/tools/mirror_tools.go):
+		fn(ToolGetSummaryTarget, "Name the .docx the user marked as the workspace summary target (all summaries are siphoned into it). Call before summarizing — never guess the target. No args.",
+			obj(map[string]any{})),
+		fn(ToolReadMirror, "Read a document the way the user SEES it in the app: page by page, with the mirror metadata header (kind, page size, font, editable). Mirrors exist for files opened in the app.",
+			obj(map[string]any{"path": str("Workspace-relative file path, e.g. notes/a.docx")}, "path")),
+		fn(ToolReadSkill, "Read one instruction file from the skills folder (e.g. when the user mentions @skills/my_instructions/rules.md).",
+			obj(map[string]any{"path": str("Skills-relative path, e.g. my_instructions/rules.md")}, "path")),
+		fn(ToolShell, "Run ONE basic sandboxed command in the open research folder (10s timeout, capped output). For small checks only (ls, wc, grep) — never to modify files.",
+			obj(map[string]any{"command": str("Shell command, e.g. ls -la")}, "command")),
 	}
 }
 

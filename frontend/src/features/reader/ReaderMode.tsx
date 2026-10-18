@@ -9,7 +9,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApp, activeReaderDocument, workspaceIdFromRoot } from "../../state/appState";
-import { backend, loadWorkspaceThreads, type OpenedFile } from "../../services/backend";
+import {
+  backend,
+  getSummaryTargetFile,
+  loadWorkspaceThreads,
+  parseMirrorPair,
+  setPrimarySummary,
+  type OpenedFile,
+} from "../../services/backend";
 import { EmptyState, ResizablePanel } from "../../components/ui";
 import { Icon } from "../../components/icons";
 import { isStaleRoot, uid } from "../../utils/helpers";
@@ -47,6 +54,22 @@ export default function ReaderMode() {
   const [treeError, setTreeError] = useState<string | null>(null);
   const [locatePath, setLocatePath] = useState<string | null>(null);
   const [currentRoot, setCurrentRoot] = useState<string | null>(null);
+  /**
+   * Workspace summary TARGET (backend marker, docpipe/target.go): the
+   * workspace-relative path of the .docx the user marked to receive ALL
+   * summaries. Fetched on mount + after folder picks; the sidebar shows a
+   * star on it and opening it routes to the full summary editor.
+   */
+  const [summaryTarget, setSummaryTarget] = useState<string | null>(null);
+
+  const refreshSummaryTarget = useCallback(async () => {
+    const target = await getSummaryTargetFile().catch(() => null);
+    setSummaryTarget(target?.relPath ?? null);
+  }, []);
+
+  useEffect(() => {
+    void refreshSummaryTarget();
+  }, [refreshSummaryTarget]);
 
   const refreshTree = useCallback(async () => {
     try {
@@ -98,6 +121,7 @@ export default function ReaderMode() {
       return;
     }
     await refreshTree();
+    void refreshSummaryTarget(); // target markers are workspace(root)-scoped
     const root = await backend.filesystem.libraryRoot().catch(() => null);
     const abs = root ?? picked;
     setCurrentRoot(abs);
@@ -219,6 +243,13 @@ export default function ReaderMode() {
     const format = (opened.kind === "pdf" || opened.kind === "docx" || opened.kind === "text")
       ? opened.kind
       : ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : "text";
+    // MIRROR PAIR (backend/docpipe): metaJSON is the rendering guide for
+    // the canvas (page size, fonts, margins, page map). Missing mirror =
+    // older backend build — the canvas falls back to safe defaults.
+    const { meta: mirrorMeta } = parseMirrorPair(opened);
+    // The marked summary target opens as a full summary document (editable
+    // canvas + AI diff review + autosave), so summaries land where expected.
+    const isSummaryTarget = !!summaryTarget && node.path === summaryTarget;
     const source: Source = {
       id: sourceId,
       workspaceId,
@@ -237,7 +268,7 @@ export default function ReaderMode() {
       document: {
         id: docId,
         workspaceId,
-        kind: "source",
+        kind: isSummaryTarget ? "summary" : "source",
         sourceId,
         metadata: {
           title: source.title,
@@ -245,12 +276,19 @@ export default function ReaderMode() {
           pageCount: opened.pageCount ?? 1,
           path: node.path,
           rootPath: opened.root ?? currentRoot ?? undefined,
+          mirror: mirrorMeta ?? undefined,
+          editable: mirrorMeta ? mirrorMeta.editable : format !== "pdf",
         },
         blocks,
         highlights: [],
         currentPage: 1,
       },
     });
+    if (isSummaryTarget && workspaceId) {
+      // Map it as the AI propose/publish target too (backend + state).
+      dispatch({ type: "workspace.setPrimarySummary", workspaceId, summaryId: docId });
+      void setPrimarySummary(docId);
+    }
     const label = source.title;
     dispatch({ type: "reader.doc.open", tabId: uid("rt"), documentId: docId, label: label.length > 18 ? `${label.slice(0, 16)}…` : label });
     dispatch({ type: "toast", message: `Opened ${node.label}` });
@@ -269,6 +307,8 @@ export default function ReaderMode() {
         onLocateDone={() => setLocatePath(null)}
         onShowInLibrary={showInLibrary}
         currentRoot={currentRoot}
+        summaryTarget={summaryTarget}
+        onSummaryTargetChanged={() => void refreshSummaryTarget()}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">

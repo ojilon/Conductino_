@@ -53,6 +53,10 @@ export type Action =
   | { type: "doc.blocks.replace"; documentId: ID; blocks: DocumentBlock[] }
   | { type: "doc.title"; documentId: ID; text: string }
   | { type: "doc.highlight.add"; documentId: ID; highlight: Highlight }
+  // Highlight maintenance for the canvas right-click menu: "Save
+  // permanently" patches (e.g. clears `pending`), "Remove" deletes.
+  | { type: "doc.highlight.update"; documentId: ID; highlightId: ID; patch: Partial<Highlight> }
+  | { type: "doc.highlight.remove"; documentId: ID; highlightId: ID }
   // in-file publish diffs (ephemeral review state over live blocks)
   | { type: "doc.diffs.set"; documentId: ID; diffs: SummaryDiff[] }
   | { type: "doc.diffs.dismiss"; documentId: ID; diffId: ID }

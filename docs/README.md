@@ -11,6 +11,13 @@
 2. `journey/00-meta/` — how to read these docs, how to learn Go+TS while rewriting.
 3. `journey/01-maps/` — codebase maps: data flows, section transfers, file ownership.
 
+## Implementation guides (what the code does today)
+
+- **`mirror-pipeline.md`** — the document rendering/editing/save system:
+  `content.json` + `meta.json` mirrors, the custom canvas, the verified save
+  bridge, summary targets, highlights, and the AI's mirror tools. Read this
+  before touching `backend/docpipe/`, `backend/extract/`, or the reader views.
+
 ## Tracks (each = folder with 10–20 small files, one issue per file)
 
 | Track | Folder | Goal |
